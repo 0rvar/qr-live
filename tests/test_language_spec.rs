@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use qr_live::languages;
 use sha1::{Digest, Sha1};
@@ -71,6 +71,32 @@ fn test_reference_files_exist() {
             "Reference file for {} does not exist: {}",
             name,
             spec.input
+        );
+    }
+}
+
+#[test]
+fn no_unnecessary_reference_files() {
+    let mut unnecessary_files = vec![];
+    let languages = languages::get_languages();
+    let language_inputs = languages
+        .values()
+        .map(|spec| spec.input.clone())
+        .collect::<HashSet<_>>();
+    let reference_files = std::fs::read_dir("./reference").unwrap();
+    for file in reference_files {
+        let file = file.unwrap();
+        let file_name = file.file_name();
+        let file_name = file_name.to_str().unwrap();
+        if !language_inputs.contains(file_name) {
+            unnecessary_files.push(file_name.to_string());
+        }
+    }
+    if !unnecessary_files.is_empty() {
+        unnecessary_files.sort();
+        panic!(
+            "The following reference files are unnecessary:\n{}",
+            unnecessary_files.join("\n")
         );
     }
 }
