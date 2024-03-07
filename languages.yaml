@@ -1,0 +1,874 @@
+ruby:
+  input: QR.rb
+  command: ruby QR.rb
+  output: QR.rs
+  output_sha1: 045d11ebbe5a798735bcbd5f4b602274cb446b09
+
+rust:
+  input: QR.rs
+  build: rustc QR.rs
+  build_output: QR
+  command: ./QR
+  output: QR.scala
+  output_sha1: 3d0e050117108a49b0200b27976bcbed2d0f6cde
+
+scala:
+  input: QR.scala
+  build: scalac QR.scala
+  build_output: QR
+  command: scala QR
+  output: QR.scm
+  output_sha1: 499578dd2b412176c962291e065e552ea3361d69
+
+scheme:
+  input: QR.scm
+  command: guile QR.scm
+  output: QR.sci
+  output_sha1: e8e9d8daec2edbb3421b78006a65ea594d0e80c3
+
+scilab:
+  input: QR.sci
+  command: scilab -nw -f QR.sci
+  output: QR.sed
+  output_sha1: d0db6ee06733f882c136eaea3a30f0d16e725ec9
+
+sed:
+  input: QR.sed
+  command: sed -E -f QR.sed
+  output: QR.spl
+  output_sha1: 4739757bbc7781dc5f6525ee1a007c2e1742f19b
+
+shakespeare:
+  input: QR.spl
+  command: shakespeare QR.spl
+  output: QR.sl
+  output_sha1: 0097dfccd51d8909376148f0db2a56a17ee3b274
+
+s-lang:
+  input: QR.sl
+  command: slang QR.sl
+  output: QR.sml
+  output_sha1: d75b7c015552f40069fac1ace2b4d9ebf1bae8a6
+
+standard_ml:
+  input: QR.sml
+  build: polyc -o QR QR.sml
+  build_output: QR
+  command: ./QR
+  output: QR.sq
+  output_sha1: 7a37a20bfcebca434dcea33a9d0335073f716f14
+
+subleq:
+  input: QR.sq
+  command: subleq QR.sq
+  output: QR.ss
+  output_sha1: 1404012a02770b750a997f1123dc8cd3c56dd5b6
+
+surgescript:
+  input: QR.ss
+  command: surgescript QR.ss
+  output: QR.tcl
+  output_sha1: c7ae144b06ed7faf84fbe353c68fec55cee73590
+
+tcl:
+  input: QR.tcl
+  command: tclsh QR.tcl
+  output: QR.tcsh
+  output_sha1: 921832a849dda17a539330a00402063f34e8a348
+
+tcsh:
+  input: QR.tcsh
+  command: tcsh QR.tcsh
+  output: QR.t
+  output_sha1: 393896935ba71403bb62d0f1b05e3182a810fb3f
+
+thue:
+  input: QR.t
+  command: thue QR.t
+  output: QR.ts
+  output_sha1: 62042354594cf64957f189af221de0af9e84c7e9
+
+typescript:
+  input: QR.ts
+  build: tsc --outFile QR.ts.js QR.ts
+  build_output: QR.ts.js
+  command: node QR.js
+  output: QR.unl
+  output_sha1: 88d991a74d4bd1d1b97d2b3e3e2eeba2cd8307bb
+
+unlambda:
+  input: QR.unl
+  command: unlambda QR.unl
+  output: QR.vala
+  output_sha1: cf31a9528f086474a00869c82b8cf4d3a33cc7de
+
+vala:
+  input: QR.vala
+  build: valac QR.vala
+  build_output: QR
+  command: ./QR
+  output: QR.mid
+  output_sha1: 91c013be503c5cbc981b8f5cc6fffadc96e36703
+
+velato:
+  input: QR.mid
+  command: velato QR.mid
+  output: QR.v
+  output_sha1: 927d478b82df7d8435d039368da9547017d3e02e
+
+verilog:
+  input: QR.v
+  build: iverilog -o QR QR.v
+  build_output: QR
+  command: ./QR -vcd-none
+  output: QR.vim
+  output_sha1: d3bc6047506eeb362f0b41c6e564b9ba6a6f950e
+
+vimscript:
+  input: QR.vim
+  command: vim -EsS QR.vim
+  output: QR.vb
+  output_sha1: 701323b8d5561d2fafcae16a44627ec2837abe52
+
+visual_basic:
+  input: QR.vb
+  build_file:
+    name: QR.vbproj
+    content: |
+      <Project Sdk="Microsoft.NET.Sdk"
+        ><PropertyGroup
+          ><OutputType>Exe</OutputType><TargetFramework>net7.0</TargetFramework
+          ><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup
+        ><ItemGroup><Compile Include="QR.vb" /></ItemGroup
+      ></Project>
+  command: DOTNET_NOLOGO=1 dotnet run --project QR.vbproj
+  output: QR.wasm
+  output_sha1: 18dc4b83bfb5a761345e7aab6279c5c5e59fb1c9
+
+webassembly_binary:
+  input: QR.wasm
+  command: wasmtime QR.wasm
+  output: QR.wat
+  output_sha1: 16955fc5f37a955e980863b84f3336509fd67e15
+
+webassembly_text:
+  input: QR.wat
+  build: wat2wasm QR.wat -o QR.wasm
+  build_output: QR.wasm
+  command: wasmtime QR.wasm
+  output: QR.ws
+  output_sha1: 22435ffc311b7ece02ce11169b14ae34e1e8d4a0
+
+whitespace:
+  input: QR.ws
+  command: whitespace QR.ws
+  output: QR.xslt
+  output_sha1: 06ab8bbf85320972233fb8ee5c57f27813b26940
+
+xslt:
+  input: QR.xslt
+  command: xsltproc QR.xslt
+  output: QR.yab
+  output_sha1: 2c1abca1dd4abc5794b017302d5f3aab2b1ff610
+
+yabasic:
+  input: QR.yab
+  command: yabasic QR.yab
+  output: QR.yorick
+  output_sha1: dadf17114faf19965a0ae49f20d31ce1a2af0918
+
+yorick:
+  input: QR.yorick
+  command: yorick -batch QR.yorick
+  output: QR.azm
+  output_sha1: 1036be1f36b331ed22f1b36f4838ffa30de0961b
+
+zoem:
+  input: QR.azm
+  command: zoem -i QR.azm
+  output: QR.zsh
+  output_sha1: 6ce560226489140d46adaf4fa6f392e9eb85ad1f
+
+zsh:
+  input: QR.zsh
+  command: zsh QR.zsh
+  output: QR.+
+  output_sha1: ced70b3cdf2733931bb11d239d918eb6797561f9
+
+aplus:
+  input: QR.+
+  command: aplus QR.+
+  output: qr.adb
+  output_sha1: 5579e978a6a15a75a4bd0a248725ebb9c6a173fc
+
+ada:
+  input: qr.adb
+  build: gnatmake qr.adb
+  build_output: qr
+  command: ./qr
+  output: QR.als
+  output_sha1: e9779355255fb0ab3d9004db35813b46d3e16fd2
+
+afnix:
+  input: QR.als
+  env:
+    LANG: C
+  command: afnix axi QR.als
+  output: QR.aheui
+  output_sha1: 7321f7fb8d1b178e63eb84e11f4b26734d806bb4
+
+aheui:
+  input: QR.aheui
+  command: aheui QR.aheui
+  output: QR.a68
+  output_sha1: 380c69454e3dbf1fc3c3f1e5af7eb1900d4930b1
+
+algol_68:
+  input: QR.a68
+  command: a68g QR.a68
+  output: QR.ante
+  output_sha1: b10977126278df83c9d4ddc09d721fa9dbaee8b8
+
+ante:
+  input: QR.ante
+  command: ante QR.ante
+  output: QR.aj
+  output_sha1: 7d8fbc21be9a40499a199c3a15daf386e9ba8099
+
+aspect_j:
+  input: QR.aj
+  build: ajc QR.aj
+  build_output: QR
+  command: java QR
+  output: QR.asy
+  output_sha1: 2cd353b6d61e3be055daac94531de0e4e487af63
+
+asymptote:
+  input: QR.asy
+  command: asy QR.asy
+  output: QR.dats
+  output_sha1: b95cbfe077a24aae842ff8123608a2e64c596ab5
+
+ats:
+  input: QR.dats
+  build: patscc -o QR QR.dats
+  build_output: QR
+  command: ./QR
+  output: QR.awk
+  output_sha1: df645709380e57156bb5c90be0eb6634f95ca288
+
+awk:
+  input: QR.awk
+  command: awk -f QR.awk
+  output: QR.bash
+  output_sha1: 1f6719441b366584b81ba9043a2770fe4fb7883d
+
+bash:
+  input: QR.bash
+  command: bash QR.bash
+  output: QR.bc
+  output_sha1: fc701ecdd49bd6e90b8272ade19512a56842e641
+
+bc:
+  input: QR.bc
+  env:
+    BC_LINE_LENGTH: 4000000
+  command: bc -q QR.bc
+  output: QR.bsh
+  output_sha1: 090aee285da6c5e50246e8f1b7365ded3fd0868d
+
+beanshell:
+  input: QR.bsh
+  command: bsh QR.bsh
+  output: QR.bef
+  output_sha1: 9ef3829fd8ad330624555d7ac36ea152fbd6daa8
+
+befunge:
+  input: QR.bef
+  # or try cfunge
+  command: befunge QR.bef
+  output: QR.blc
+  output_sha1: 8e534820d320c8fb7789092fea80466233b2aac2
+
+blc8:
+  input: QR.blc
+  command: blc8 QR.blc
+  output: QR.bf
+  output_sha1: da639bf7b8806c9c82d16a43af7908d949d43896
+
+brainfuck:
+  input: QR.bf
+  command: brainfuck QR.bf
+  output: QR.c
+  output_sha1: babf35f81cbb9a392b92281e834b628d143b1523
+
+c:
+  input: QR.c
+  build: gcc -o QR QR.c
+  build_output: QR
+  command: ./QR
+  output: QR.cpp
+  output_sha1: 619db58027aecebe9f3a99094d131657f57d386e
+
+cpp:
+  input: QR.cpp
+  build: g++ -o QR QR.cpp
+  build_output: QR
+  command: ./QR
+  output: QR.cs
+  output_sha1: d25ae9227c9f347eed63c34e1a7f01d5112e390a
+
+csharp:
+  input: QR.cs
+  build_file:
+    name: QR.csproj
+    content: |
+      <Project Sdk="Microsoft.NET.Sdk"
+        ><PropertyGroup
+          ><OutputType>Exe</OutputType><TargetFramework>net7.0</TargetFramework
+          ><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup
+        ><ItemGroup><Compile Include="QR.cs" /></ItemGroup
+      ></Project>
+  env:
+    DOTNET_NOLOGO: "1"
+  command: dotnet run --project QR.csproj
+  output: QR.chef
+  output_sha1: 899ab814dad8161101f0b4053ac1c6a8b98177ba
+
+chef:
+  input: QR.chef
+  build: compilechef QR.chef
+  build_output: QR.chef.pl
+  command: perl QR.chef.pl
+  output: QR.clj
+  output_sha1: 984519e4112b2a08ba7e6a3ff4b66d28e336c88d
+
+clojure:
+  input: QR.clj
+  command: clojure QR.clj
+  output: QR.cmake
+  output_sha1: fc329a650903dc840517373a662c443811bd1fbe
+
+cmake:
+  input: QR.cmake
+  command: cmake -P QR.cmake
+  output: QR.cob
+  output_sha1: 79ed5f7079c14725dc6e48f699770020202631fc
+
+cobol:
+  input: QR.cob
+  build: cobc -O2 -x QR.cob
+  build_output: QR
+  command: ./QR
+  output: QR.coffee
+  output_sha1: 1ae27e28662a055b8b4af6b8a1d61f848b2ef987
+
+coffeescript:
+  input: QR.coffee
+  command: coffee --nodejs --stack_size=100000 QR.coffee
+  output: QR.lisp
+  output_sha1: 8d371da4244fd8450b799e22c5ac60679bfc9c53
+
+commonlisp:
+  input: QR.lisp
+  command: clisp QR.lisp
+  output: QR.cr
+  output_sha1: 935a80607eda583aed0e408ce92b51ea8f3bb1d6
+
+crystal:
+  input: QR.cr
+  command: crystal QR.cr
+  output: QR.d
+  output_sha1: e570ba9c9582fa8c5e86f0526ff25ae572f200a0
+
+d:
+  input: QR.d
+  command: gdc -o QR QR.d
+  output: QR.dfy
+  output_sha1: d698fa1c1cbfac569ca0589dc94524fecb55a5a6
+
+dafny:
+  input: QR.dfy
+  build: dafny QR.dfy
+  build_output: QR.exe
+  command: mono QR.exe
+  output: QR.dc
+  output_sha1: ccafeefaf170d44c25d45f4609500c7c31b3ef12
+
+dc:
+  input: QR.dc
+  command: dc QR.dc
+  output: QR.dhall
+  output_sha1: 26cd1b4cdb41544a3ba00b2baa29fb0a017d7efa
+
+dhall:
+  input: QR.dhall
+  command: dhall text --file QR.dhall
+  output: QR.exs
+  output_sha1: 54369587cb090a22b93c2624bb32eb2ffce77a77
+
+elixir:
+  input: QR.exs
+  command: elixir QR.exs
+  output: QR.el
+  output_sha1: 3d4e73f0d35d09f731a62db14177e8ed9fa8d75d
+
+emacs_lisp:
+  input: QR.el
+  command: emacs -Q --script QR.el
+  output: QR.erl
+  output_sha1: 7a6886d548a5402539483dcf36f816ca081bdf4c
+
+erlang:
+  input: QR.erl
+  command: escript QR.erl
+  output: QR.fsx
+  output_sha1: 102d598f085aa43ab2ba95f4c78bb24c62e3bb7d
+
+fsharp:
+  input: QR.fsx
+  build_file:
+    name: QR.fsproj
+    content: |
+      <Project Sdk="Microsoft.NET.Sdk"
+        ><PropertyGroup
+          ><OutputType>Exe</OutputType><TargetFramework>net7.0</TargetFramework
+          ><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup
+        ><ItemGroup><Compile Include="QR.fsx" /></ItemGroup
+      ></Project>
+  env:
+    DOTNET_NOLOGO: "1"
+  command: dotnet run --project QR.fsproj
+  output: QR.false
+  output_sha1: 6991c6b726914ba0c50461e5c13e5b92816f731b
+
+false:
+  input: QR.false
+  command: false QR.false
+  output: QR.fl
+  output_sha1: bb7ed64c79f386e26ae6d75cb665a4103d7f2566
+
+flex:
+  input: QR.fl
+  build: flex -o QR.fl.c QR.fl && gcc -o QR QR.fl.c -lfl
+  build_output: QR
+  command: ./QR
+  output: QR.fish
+  output_sha1: 45a23b1c041cf362c6518353c4322d92978da945
+
+fish:
+  input: QR.fish
+  command: fish QR.fish
+  output: QR.fs
+  output_sha1: 8adf25ba29bee69c92077c476310cdaad96cc487
+
+forth:
+  input: QR.fs
+  command: gforth QR.fs
+  output: QR.f
+  output_sha1: 47ba713c815502736f5cfd04cf5d4c5bd1b76702
+
+fortran77:
+  input: QR.f
+  build: gfortran -o QR QR.f
+  build_output: QR
+  command: ./QR
+  output: QR.f90
+  output_sha1: e20f81f23b256260d5dc46fccaa496b15e78c8dc
+
+fortran90:
+  input: QR.f90
+  build: gfortran -o QR QR.f90
+  build_output: QR
+  command: ./QR
+  output: QR.gbs
+  output_sha1: 7192ee25f4dd624758086e15c05eba9e080a4bac
+
+gambas:
+  input: QR.gbs
+  command: gbs3 QR.gbs
+  output: QR.g
+  output_sha1: 5215542fde19eba43aac296604ed007b425d3d59
+
+gap:
+  input: QR.g
+  command: gap -q QR.g
+  output: QR.gdb
+  output_sha1: d3df7b26813bcba97385aed7feb88c94bdbf9b6f
+
+gdb:
+  input: QR.gdb
+  command: gdb -q -x QR.gdb
+  output: QR.gel
+  output_sha1: 661b30e598df3463a459f8bca599a60ec563dfae
+
+gel:
+  input: QR.gel
+  command: genius QR.gel
+  output: QR.plt
+  output_sha1: 4326457c9362b241f2615a2d7b32e8f1bb848f78
+
+gnuplot:
+  input: QR.plt
+  command: gnuplot QR.plt
+  output: QR.go
+  output_sha1: 737838922bcb2dbb3b8ced5ad9a0e29b68454cff
+
+go:
+  input: QR.go
+  command: go run QR.go
+  output: QR.gs
+  output_sha1: 724680f929d9e6ce4a2740c67582692577a2caf9
+
+golfscript:
+  input: QR.gs
+  command: golfscript QR.gs
+  output: QR.gpt
+  output_sha1: 87f496ecc897b39b9ea268096bc7e091e4d414f8
+
+g_portugol:
+  input: QR.gpt
+  build: gpt -t QR.c QR.gpt && gcc -o QR QR.c
+  build_output: QR
+  command: ./QR
+  output: QR.grass
+  output_sha1: 043e02b44a64122d15a17768b336d15732c8eb9e
+
+grass:
+  input: QR.grass
+  command: grass QR.grass
+  output: QR.groovy
+  output_sha1: a74e5efd5ef3c10e8258c71f9271a6ff3eeff821
+
+groovy:
+  input: QR.groovy
+  command: groovy QR.groovy
+  output: QR.gz
+  output_sha1: ecf0ceda10058feca88da493bd69852304a8199f
+
+gzip:
+  input: QR.gz
+  command: gzip -cd QR.gz
+  output: QR.hs
+  output_sha1: 0130a6b407c6d50f939e4478928b16659718e759
+
+haskell:
+  input: QR.hs
+  command: runhaskell QR.hs
+  output: QR.hx
+  output_sha1: 36bac33d7b6c292a4c4fd8edd0b64c8ef07b3fb8
+
+haxe:
+  input: QR.hx
+  build: haxe -main QR -neko QR.n
+  build_output: QR.n
+  command: neko QR.n
+  output: QR.icn
+  output_sha1: d1492cdad89ea83b79bca9bf37894e64197e313a
+
+icon:
+  input: QR.icn
+  build: icont -s QR.icn
+  build_output: QR
+  command: ./QR
+  output: QR.i
+  output_sha1: 710a883fe2c1bd50a165fde56db393ec5370d130
+
+intercal:
+  input: QR.i
+  build: ick -bfOc QR.i && gcc -o QR QR.c -lick
+  build_output: QR
+  command: ./QR
+  output: QR.j
+  output_sha1: b675630c93de3574f36f987610e0e0e4109bee5b
+
+jasmin:
+  input: QR.j
+  build: jasmin QR.j
+  build_output: QR.class
+  command: java QR
+  output: QR.java
+  output_sha1: 242351f01fb77d6098bd6a0d011efa7ff38ce99c
+
+java:
+  input: QR.java
+  build: javac QR.java
+  build_output: QR.class
+  command: java QR
+  output: QR.js
+  output_sha1: 9b917e6779cbd77e7a51f8459852df898294e1eb
+
+javascript:
+  input: QR.js
+  command: node QR.js
+  output: QR.jq
+  output_sha1: 5cdd34807c6e7467aaf7f5e099330ccb082d657f
+
+jq:
+  input: QR.jq
+  command: jq -r -n -f QR.j
+  output: QR.jsfuck
+  output_sha1: 31374952b97aad0fdb52d160508a6c61861155ec
+
+jsfuck:
+  input: QR.jsfuck
+  unlimited_ulimit: true # ulimit -s unlimited
+  command: node --stack-size=100000 QR.jsfuck
+  output: QR.kt
+  output_sha1: 8a3fb43aaae34492c32502f24dbea7120bba28c4
+
+kotlin:
+  input: QR.kt
+  build: kotlinc QR.kt -include-runtime -d QR.jar
+  build_output: QR.jar
+  command: kotlin QR.jar
+  output: QR.ksh
+  output_sha1: 261559490a92a9cf8fcbefe9ed00955b2b0f1edd
+
+ksh:
+  input: QR.ksh
+  command: ksh QR.ksh
+  output: QR.lazy
+  output_sha1: ae070fb483a6b4d87c405ed5b55c08b6b3a814f6
+
+lazy_k:
+  input: QR.lazy
+  command: lazyk QR.lazy
+  output: QR.li
+  output_sha1: 16222c5b9fa6059c38822549f670d010a86df073
+
+lisaac:
+  input: QR.li
+  build: lisaac QR.li
+  build_output: qr
+  command: ./qr
+  output: QR.ls
+  output_sha1: f464a5803021b260bbaeed898165bed35d110cbe
+
+livescript:
+  input: QR.ls
+  command: lsc QR.ls
+  output: QR.ll
+  output_sha1: daf7ecc91c040335dde103abbf6d5199ce7eeea6
+
+llvm:
+  input: QR.ll
+  build: llvm-as QR.ll
+  build_output: QR.bc
+  command: lli QR.bc
+  output: QR.lol
+  output_sha1: 622d675addffa79e0195f368dee5fd3ad540a69c
+
+lolcode:
+  input: QR.lol
+  command: lci QR.lol
+  output: QR.lua
+  output_sha1: b1e105a96329129c391b3f4cf8e040ed027eb95d
+
+lua:
+  input: QR.lua
+  command: lua QR.lua
+  output: QR.m4
+  output_sha1: 7446271c49ee08169364d4cbd1eed367571a7f51
+
+m4:
+  input: QR.m4
+  command: m4 QR.m4
+  output: QR.mk
+  output_sha1: 7101070e370b8f74079ce57ac866006330e6beb0
+
+make:
+  input: QR.mk
+  command: make -f QR.mk
+  output: QR.mac
+  output_sha1: a01eac05a1f2e99919df93d81fa5144988a14670
+
+maxima:
+  input: QR.mac
+  command: maxima -q --init-mac=QR.mac
+  output: QR.mzn
+  output_sha1: 4026c8f56bb6f17eed25f2128a1c12ef66813c52
+
+minizinc:
+  input: QR.mzn
+  command: minizinc --solver Gecode --soln-sep '' QR.mzn
+  output: QR.mod
+  output_sha1: d0dc0356fcf5c546bcd197c185fa658cff888f2c
+
+modula_2:
+  input: QR.mod
+  build: gm2 QR.mod -o QR
+  build_output: QR
+  command: ./QR
+  output: QR.il
+  output_sha1: ca3971248c8c4ef93d84d67d96daee0bef57f15c
+
+msil:
+  input: QR.il
+  build: ilasm QR.il
+  build_output: QR.exe
+  command: mono QR.exe
+  output: QR.mustache
+  output_sha1: 879a15baa76ff4303188825b33aac5013e1e0820
+
+mustache:
+  input: QR.mustache
+  command: mustache QR.mustache QR.mustache
+  output: QR.asm
+  output_sha1: 5bf6af83a617964094276d0883744ca89971f47c
+
+nasm:
+  input: QR.asm
+  build: nasm -f elf64 QR.asm && ld -o QR QR.o
+  build_output: QR
+  command: ./QR
+  output: QR.neko
+  output_sha1: 9b01f02c3a4277188d3de96360505fa805d6d783
+
+neko:
+  input: QR.neko
+  build: nekoc QR.neko
+  build_output: QR.n
+  command: neko QR.n
+  output: QR.5c
+  output_sha1: 5a40a366db891b47b4e73c146d053820cfa88924
+
+nickle:
+  input: QR.5c
+  command: nickle QR.5c
+  output: QR.nim
+  output_sha1: 8c6acc31e031bce2e2202c961c32e259a4ba4f97
+
+nim:
+  input: QR.nim
+  build: nim compile QR.nim
+  build_output: QR
+  command: ./QR
+  output: QR.m
+  output_sha1: 39d3af493dad3bf96b79768631c3470128477d1d
+
+objective_c:
+  input: QR.m
+  build: gcc -o QR QR.m
+  build_output: QR
+  command: ./QR
+  output: QR.ml
+  output_sha1: d875384bf7732b1f9c584008a4bcff14e6503dfe
+
+ocaml:
+  input: QR.ml
+  command: ocaml QR.ml
+  output: QR.octave
+  output_sha1: df172c8f8914d64a8215a139f5870e890ac84ee0
+
+octave:
+  input: QR.octave
+  command: octave QR.octave
+  output: QR.ook
+  output_sha1: b60c2a4b7db6e936e4ffdd7f8901a9ddb96e01a5
+
+ook:
+  input: QR.ook
+  command: ook QR.ook
+  output: QR.gp
+  output_sha1: 072561ddce43ce7b4fbadeb80e840a44ffb1f0d1
+
+pari_gp:
+  input: QR.gp
+  command: gp -f -q QR.gp
+  output: QR.p
+  output_sha1: d5c05f65fa8ea90456abba6a51cab8b43bf4fe50
+
+parser_3:
+  input: QR.p
+  command: parser3 QR.p
+  output: QR.pas
+  output_sha1: 74f138c893e4c1776e5caa52096f5860ff8fa74c
+
+pascal:
+  input: QR.pas
+  build: fpc QR.pas
+  build_output: QR
+  command: ./QR
+  output: QR.pl
+  output_sha1: 65c7ad83ce09a5d3ace7601c72049253b2a90252
+
+perl:
+  input: QR.pl
+  command: perl QR.pl
+  output: QR.pl6
+  output_sha1: 175ef69ce9e917e9568e418b35639375f9c55be1
+
+perl6:
+  input: QR.pl6
+  command: perl6 QR.pl6
+  output: QR.php
+  output_sha1: 3944a39638863a02c03d33dfbd25aa4a501e3541
+
+php:
+  input: QR.php
+  command: php QR.php
+  output: QR.png
+  output_sha1: 57d6e9c57b0ff69663c9dc1140a4e0939189a4a2
+
+piet:
+  input: QR.png
+  command: npiet QR.png
+  output: QR.ps
+  output_sha1: abcadf15686a9632583817c876b66e2199b82e8c
+
+postscript:
+  input: QR.ps
+  command: gs -dNODISPLAY -q QR.ps
+  output: QR.ppt
+  output_sha1: 126548020c7c21e9f48dbda43904b6d5261c073c
+
+ppt:
+  input: QR.ppt
+  command: ppt -d < QR.ppt
+  output: QR.prolog
+  output_sha1: 3498c52004f881bb0c87dc5818e685178010c004
+
+prolog:
+  input: QR.prolog
+  command: swipl -q -t qr -f QR.prolog
+  output: QR.pr
+  output_sha1: 3fe52e575ba6cb13c0b3390684277073d603bae8
+
+promela_spin:
+  input: QR.pr
+  command: spin -T QR.pr
+  output: QR.py
+  output_sha1: ad907b54be20ac0c379f56edbc7bf9fd0fe09358
+
+python:
+  input: QR.py
+  command: python3 QR.py
+  output: QR.R
+  output_sha1: 1dc8af7a7145706f3ec1f98a54bb5af4dc9c7e2c
+
+r:
+  input: QR.R
+  command: R --slave -f QR.R
+  output: QR.ratfor
+  output_sha1: 87ac4c0c81a7bb5d06c97e18dcc441b06e73653a
+
+ratfor:
+  input: QR.ratfor
+  build: ratfor -o QR.ratfor.f QR.ratfor && gfortran -o QR QR.ratfor.f
+  build_output: QR
+  command: ./QR
+  output: QR.rc
+  output_sha1: 2db8eed05ec07c733555005a70ffc92d3dc06336
+
+rc:
+  input: QR.rc
+  command: rc QR.rc
+  output: QR.rexx
+  output_sha1: e37ba13ea7ab356ce2b81070a9d5cf513dd6986a
+
+rexx:
+  input: QR.rexx
+  command: rexx QR.rexx
+  output: QR.rb
+  output_sha1: 7241d1702966655bd1f80cc95051062ad82dbf5e

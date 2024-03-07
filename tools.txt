@@ -1,0 +1,115 @@
+algol68g
+# aplus-fsf
+aspectj
+asymptote
+# ats2-lang
+bash
+bc
+bison
+bsdgames
+# bsh
+clisp
+clojure
+cmake
+coffeescript
+crystal
+curl
+dafny
+# dc
+dhall
+# dotnet7
+elixir
+emacs-nox
+erlang
+f2c
+fish
+flex
+# fp-compiler
+# g++
+# gambas3-gb-pcre
+# gambas3-scripter
+gap
+gawk
+gcc
+gdb
+gdc
+# genius
+gforth
+gfortran
+ghc
+ghostscript
+# gm2
+gnat
+# gnucobol4
+gnu-cobol
+gnuplot
+# gobjc
+# golang
+# gpt
+groff
+groovy
+guile
+gzip
+haxe
+# icont
+# iconx
+intercal
+# iverilog
+verilog
+# jasmin-sable
+jq
+kotlin
+ksh
+# libevent-dev
+# libgd-dev
+# libpng-dev
+# libpolyml-dev
+# lisaac
+# livescript
+llvm
+lua
+m4
+gnumake
+maxima
+minizinc
+mono
+nasm
+neko
+# nickle
+nim
+typescript
+nodejs
+ocaml
+octave
+jdk
+pari
+# parser3-cgi
+perl
+php
+polyml
+python3
+R
+rakudo
+# ratfor
+rc
+regina
+ruby
+# ruby-mustache
+rustc
+scala
+scilab-bin
+gnused
+slang
+spin
+# surgescript
+swiProlog
+tcl
+tcsh
+vala
+vim
+wabt
+# xsltproc
+yabasic
+# yorick
+# zoem
+zsh
