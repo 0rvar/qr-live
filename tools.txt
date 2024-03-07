@@ -17,7 +17,7 @@ curl
 dafny
 # dc
 dhall
-# dotnet7
+dotnet-sdk_8
 elixir
 emacs-nox
 erlang
@@ -108,6 +108,7 @@ tcsh
 vala
 vim
 wabt
+wasmtime
 # xsltproc
 yabasic
 # yorick

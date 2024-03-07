@@ -141,7 +141,9 @@ visual_basic:
           ><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup
         ><ItemGroup><Compile Include="QR.vb" /></ItemGroup
       ></Project>
-  command: DOTNET_NOLOGO=1 dotnet run --project QR.vbproj
+  env:
+    DOTNET_NOLOGO: "1"
+  command: dotnet run --project QR.vbproj
   output: QR.wasm
   output_sha1: 18dc4b83bfb5a761345e7aab6279c5c5e59fb1c9
 

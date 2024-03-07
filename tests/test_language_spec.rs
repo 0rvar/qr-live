@@ -45,14 +45,16 @@ fn test_tools_available() {
         }
     }
     if !missing_commands.is_empty() {
+        let num_missing = missing_commands.len();
+        missing_commands.sort_by_key(|(name, _)| name.clone());
         let missing_commands = missing_commands
             .into_iter()
             .map(|(name, command)| format!("{:<16} (used by {})", command, name))
             .collect::<Vec<_>>()
             .join("\n");
         panic!(
-            "The following commands are not available:\n{}",
-            missing_commands
+            "The following commands are not available:\n{}\n\n(total: {} commands)",
+            missing_commands, num_missing
         );
     }
 }
@@ -82,7 +84,14 @@ fn test_reference_files_have_correct_sha1() {
         let reference_file = std::path::Path::new("./")
             .join("reference")
             .join(&spec.output);
-        let reference_file_contents = std::fs::read(&reference_file).unwrap();
+        let reference_file_contents = match std::fs::read(&reference_file) {
+            Ok(contents) => contents,
+            Err(e) => panic!(
+                "Failed to read reference file {}: {}",
+                reference_file.display(),
+                e
+            ),
+        };
         let actual_sha1 = Sha1::digest(&reference_file_contents);
         let actual_sha1 = format!("{:x}", actual_sha1);
         if actual_sha1 != reference_sha1 {
@@ -110,9 +119,22 @@ fn test_reference_files_have_correct_sha1() {
 }
 
 fn command_exists(command: &str) -> bool {
-    std::process::Command::new("which")
+    let output = std::process::Command::new("which")
         .arg(command)
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+        // .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output();
+
+    let output = match output {
+        Ok(output) => output,
+        Err(_) => return false,
+    };
+
+    if !output.status.success() {
+        return false;
+    }
+
+    let path = String::from_utf8_lossy(output.stdout.as_slice());
+
+    path.trim().starts_with("/nix/store") && path.contains("all-tools-shell")
 }
