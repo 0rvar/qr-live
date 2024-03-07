@@ -46,7 +46,7 @@ shakespeare:
 
 s-lang:
   input: QR.sl
-  command: slang QR.sl
+  command: slsh QR.sl
   output: QR.sml
   output_sha1: d75b7c015552f40069fac1ace2b4d9ebf1bae8a6
 
@@ -300,7 +300,9 @@ blc8:
 
 brainfuck:
   input: QR.bf
-  command: brainfuck QR.bf
+  build: bfc QR.bf
+  build_output: QR
+  command: ./QR
   output: QR.c
   output_sha1: babf35f81cbb9a392b92281e834b628d143b1523
 
@@ -663,7 +665,7 @@ llvm:
 
 lolcode:
   input: QR.lol
-  command: lci QR.lol
+  command: lolcode-lci QR.lol
   output: QR.lua
   output_sha1: b1e105a96329129c391b3f4cf8e040ed027eb95d
 

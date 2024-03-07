@@ -1,13 +1,13 @@
 algol68g
-# aplus-fsf
+ante
 aspectj
 asymptote
-# ats2-lang
+ats2
 bash
 bc
+bfc
 bison
 bsdgames
-# bsh
 clisp
 clojure
 cmake
@@ -15,7 +15,6 @@ coffeescript
 crystal
 curl
 dafny
-# dc
 dhall
 dotnet-sdk_8
 elixir
@@ -24,93 +23,71 @@ erlang
 f2c
 fish
 flex
-# fp-compiler
-# g++
-# gambas3-gb-pcre
-# gambas3-scripter
+fpc
 gap
 gawk
 gcc
 gdb
 gdc
-# genius
 gforth
 gfortran
 ghc
 ghostscript
-# gm2
 gnat
-# gnucobol4
 gnu-cobol
+gnumake
 gnuplot
-# gobjc
-# golang
-# gpt
+gnused
+go
 groff
 groovy
 guile
 gzip
 haxe
-# icont
-# iconx
+icon-lang
 intercal
-# iverilog
-verilog
-# jasmin-sable
+jdk
 jq
 kotlin
 ksh
-# libevent-dev
-# libgd-dev
-# libpng-dev
-# libpolyml-dev
-# lisaac
-# livescript
 llvm
+lolcode
 lua
 m4
-gnumake
 maxima
 minizinc
 mono
 nasm
 neko
-# nickle
 nim
-typescript
 nodejs
+npiet
 ocaml
 octave
-jdk
 pari
-# parser3-cgi
 perl
 php
 polyml
 python3
 R
 rakudo
-# ratfor
 rc
 regina
 ruby
-# ruby-mustache
 rustc
 scala
 scilab-bin
-gnused
+slang
 slang
 spin
-# surgescript
 swiProlog
 tcl
 tcsh
+typescript
 vala
+verilog
 vim
 wabt
 wasmtime
-# xsltproc
 yabasic
-# yorick
-# zoem
 zsh
