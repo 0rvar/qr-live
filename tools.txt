@@ -78,7 +78,6 @@ rustc
 scala
 scilab-bin
 slang
-slang
 spin
 swiProlog
 tcl
