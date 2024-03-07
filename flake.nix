@@ -18,6 +18,14 @@
           (lib.flip lib.attrVals
             pkgs)
         ];
+        haskellTools = lib.pipe ./tools.haskellPackages.txt [
+          builtins.readFile
+          (lib.splitString "\n")
+          (lib.filter (x: x != ""))
+          (lib.filter (x: builtins.substring 0 1 x != "#"))
+          (lib.flip lib.attrVals
+            pkgs.haskellPackages)
+        ];
         esotericPackages = esoteric_nix.packages.${system};
         esoNames = builtins.attrNames esotericPackages;
         esotericTools = map (name: esotericPackages.${name}) esoNames;
@@ -26,7 +34,7 @@
         packages.default = pkgs.buildEnv
           {
             name = "all-tools-shell";
-            paths = tools ++ esotericTools;
+            paths = tools ++ haskellTools ++ esotericTools;
             ignoreCollisions = true;
           };
       }
