@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-#[derive(serde_derive::Deserialize)]
+#[derive(serde_derive::Deserialize, Debug)]
 pub struct QuineLanguageSpec {
     pub input: String,
     pub build: Option<String>,
@@ -13,7 +13,7 @@ pub struct QuineLanguageSpec {
     pub output_sha1: String,
 }
 
-#[derive(serde_derive::Deserialize)]
+#[derive(serde_derive::Deserialize, Debug)]
 pub struct ExtraBuildFile {
     pub name: String,
     pub content: String,
