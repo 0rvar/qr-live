@@ -34,7 +34,7 @@ scilab:
 
 sed:
   input: QR.sed
-  command: sed -E -f QR.sed
+  command: sed -E -f QR.sed QR.sed
   output: QR.spl
   output_sha1: 4739757bbc7781dc5f6525ee1a007c2e1742f19b
 

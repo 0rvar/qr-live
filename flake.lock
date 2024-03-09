@@ -5,11 +5,11 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1709723254,
-        "narHash": "sha256-EuWDaeE4tQd+vNQawwvtQOtXFx7wqUGDdIlXFx7Vw2I=",
+        "lastModified": 1710014529,
+        "narHash": "sha256-KUCFZW6m2b+cXMaHeaakVvhLG54YQYAMp3NVJVUOA7E=",
         "owner": "0rvar",
         "repo": "esoteric_nix",
-        "rev": "474378687171528ea6e84407694bc8521d371067",
+        "rev": "d72b03d4b768ce9cb6a7b30407be66baac8a7076",
         "type": "github"
       },
       "original": {
