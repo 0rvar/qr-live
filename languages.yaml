@@ -92,7 +92,7 @@ typescript:
   input: QR.ts
   build: tsc --outFile QR.ts.js QR.ts
   build_output: QR.ts.js
-  command: node QR.js
+  command: node QR.ts.js
   output: QR.unl
   output_sha1: 88d991a74d4bd1d1b97d2b3e3e2eeba2cd8307bb
 
@@ -137,7 +137,7 @@ visual_basic:
     content: |
       <Project Sdk="Microsoft.NET.Sdk"
         ><PropertyGroup
-          ><OutputType>Exe</OutputType><TargetFramework>net7.0</TargetFramework
+          ><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework
           ><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup
         ><ItemGroup><Compile Include="QR.vb" /></ItemGroup
       ></Project>
@@ -329,7 +329,7 @@ csharp:
     content: |
       <Project Sdk="Microsoft.NET.Sdk"
         ><PropertyGroup
-          ><OutputType>Exe</OutputType><TargetFramework>net7.0</TargetFramework
+          ><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework
           ><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup
         ><ItemGroup><Compile Include="QR.cs" /></ItemGroup
       ></Project>
@@ -436,7 +436,7 @@ fsharp:
     content: |
       <Project Sdk="Microsoft.NET.Sdk"
         ><PropertyGroup
-          ><OutputType>Exe</OutputType><TargetFramework>net7.0</TargetFramework
+          ><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework
           ><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup
         ><ItemGroup><Compile Include="QR.fsx" /></ItemGroup
       ></Project>
