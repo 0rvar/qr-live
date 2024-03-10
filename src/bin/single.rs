@@ -15,11 +15,18 @@ fn main() {
     std::fs::write(&input_file, input_content).expect("Could not write input file");
 
     if let Some(build_file) = &spec.build_file {
+        println!("Writing {}", &build_file.name);
         let build_file_name = tmp_dir.path().join(&build_file.name);
         std::fs::write(&build_file_name, &build_file.content).expect("Could not write build file");
     }
 
     if let Some(build) = &spec.build {
+        println!(
+            "Building {} from {} ({})",
+            &spec.build_output.as_deref().unwrap_or_default(),
+            &spec.input,
+            build
+        );
         // Run build.command
         let output = std::process::Command::new("sh")
             .arg("-c")
@@ -38,6 +45,7 @@ fn main() {
     }
 
     // Run spec.command, put output in stdout
+    println!("Running {}", &spec.command);
     let output = std::process::Command::new("sh")
         .arg("-c")
         .arg(&spec.command)

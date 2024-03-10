@@ -5,7 +5,6 @@ asymptote
 ats2
 bash
 bc
-bfc
 bison
 bsdgames
 clisp

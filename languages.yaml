@@ -300,9 +300,7 @@ blc8:
 
 brainfuck:
   input: QR.bf
-  build: bfc QR.bf
-  build_output: QR
-  command: ./QR
+  command: brainfuck QR.bf
   output: QR.c
   output_sha1: babf35f81cbb9a392b92281e834b628d143b1523
 
