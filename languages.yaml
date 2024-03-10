@@ -751,7 +751,7 @@ nim:
 
 objective_c:
   input: QR.m
-  build: gcc -o QR QR.m
+  build: clang -o QR QR.m
   build_output: QR
   command: ./QR
   output: QR.ml
