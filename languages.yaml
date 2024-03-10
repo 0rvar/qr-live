@@ -610,7 +610,7 @@ javascript:
 
 jq:
   input: QR.jq
-  command: jq -r -n -f QR.j
+  command: jq -r -n -f QR.jq
   output: QR.jsfuck
   output_sha1: 31374952b97aad0fdb52d160508a6c61861155ec
 
