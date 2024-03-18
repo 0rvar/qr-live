@@ -199,7 +199,7 @@ zsh:
 
 aplus:
   input: QR.+
-  command: aplus QR.+
+  command: a+ QR.+
   output: qr.adb
   output_sha1: 5579e978a6a15a75a4bd0a248725ebb9c6a173fc
 
