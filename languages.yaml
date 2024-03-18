@@ -288,7 +288,7 @@ beanshell:
 befunge:
   input: QR.bef
   # or try cfunge
-  command: befunge QR.bef
+  command: cfunge QR.bef
   output: QR.blc
   output_sha1: 8e534820d320c8fb7789092fea80466233b2aac2
 
