@@ -633,7 +633,7 @@ ksh:
   output: QR.lazy
   output_sha1: ae070fb483a6b4d87c405ed5b55c08b6b3a814f6
 
-lazy_k:
+lazyk:
   input: QR.lazy
   command: lazyk QR.lazy
   output: QR.li
