@@ -49,6 +49,7 @@ jdk
 jq
 kotlin
 ksh
+libxslt
 llvm
 lolcode
 lua
