@@ -221,7 +221,7 @@ afnix:
 
 aheui:
   input: QR.aheui
-  command: aheui QR.aheui
+  command: goaheui QR.aheui
   output: QR.a68
   output_sha1: 380c69454e3dbf1fc3c3f1e5af7eb1900d4930b1
 
