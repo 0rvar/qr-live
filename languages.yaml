@@ -300,7 +300,7 @@ blc8:
 
 brainfuck:
   input: QR.bf
-  command: brainfuck QR.bf
+  command: anyfuck QR.bf
   output: QR.c
   output_sha1: babf35f81cbb9a392b92281e834b628d143b1523
 
@@ -771,7 +771,7 @@ octave:
 
 ook:
   input: QR.ook
-  command: ook QR.ook
+  command: anyfuck QR.ook
   output: QR.gp
   output_sha1: 072561ddce43ce7b4fbadeb80e840a44ffb1f0d1
 
