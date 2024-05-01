@@ -163,7 +163,7 @@ webassembly_text:
 
 whitespace:
   input: QR.ws
-  command: whitespace QR.ws
+  command: albus QR.ws
   output: QR.xslt
   output_sha1: 06ab8bbf85320972233fb8ee5c57f27813b26940
 
