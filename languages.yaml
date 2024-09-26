@@ -446,7 +446,7 @@ fsharp:
 
 false:
   input: QR.false
-  command: false QR.false
+  command: falsy QR.false
   output: QR.fl
   output_sha1: bb7ed64c79f386e26ae6d75cb665a4103d7f2566
 
