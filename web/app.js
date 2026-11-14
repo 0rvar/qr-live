@@ -6,6 +6,7 @@
   const SRC_LIMIT = 20000;
   const HEX_LIMIT = 2048;
   const RIPPLE_MS = 1600;
+  const RUN_MIN_DWELL_MS = 250;
   const PNG_PAN_PX_PER_S = 90;
   const MONO = getComputedStyle(document.documentElement).getPropertyValue("--mono").trim() || "monospace";
   const TAU = Math.PI * 2;
@@ -28,6 +29,8 @@
     elapsed: $("elapsed"),
     size: $("size"),
     note: $("note"),
+    result: $("result"),
+    toolchain: $("toolchain"),
     conn: $("conn"),
     mode: $("mode"),
     log: $("log"),
@@ -62,7 +65,11 @@
   let results = []; // latest StepDone per ring index, each with its absolute key
   let visited = new Uint8Array(0);
   let visitedLap = 0;
-  let cur = null; // { index, key, phase, startedAt }
+  // The step on screen: { index, key, lap, phase, startedAt, runAt, done, restAt, restShown }.
+  // phase is "build" | "run" while it executes and "rest" once step_done has
+  // arrived (done holds the StepDone) until the next step_start. null = idle.
+  let cur = null;
+  let toolchain = "";
   let clockOffset = 0; // server clock minus local clock
   let connected = false;
   let avgStepMs = 1500;
@@ -306,9 +313,11 @@
         ctx.stroke();
         ctx.setLineDash([]);
       } else {
-        const s = reduced ? 0.5 : 0.5 + 0.5 * Math.sin(t * TAU * 1.4);
+        // running pulses; resting on a finished step holds a steady glow in its result colour
+        const rest = isResting();
+        const s = reduced || rest ? 0.5 : 0.5 + 0.5 * Math.sin(t * TAU * 1.4);
         ctx.globalAlpha = 0.14 + 0.14 * s;
-        ctx.fillStyle = colors.head;
+        ctx.fillStyle = rest ? colors[kind(cur.done)] : colors.head;
         ctx.beginPath();
         ctx.arc(x, y, hr * (1.9 + 0.7 * s), 0, TAU);
         ctx.fill();
@@ -393,6 +402,13 @@
     ctx.clearRect(0, 0, el.canvas.width, el.canvas.height);
     ctx.drawImage(base, 0, 0);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // The rest state is shown once the run badge has been visible for
+    // RUN_MIN_DWELL_MS, so very short steps still read as having run.
+    if (cur && cur.phase === "rest" && !cur.restShown && now >= cur.restAt) {
+      cur.restShown = true;
+      renderNow();
+    }
+
     drawRipple(now);
     drawBody(now);
     drawHead(now);
@@ -405,9 +421,12 @@
   // ---- centre readout -----------------------------------------------------
 
   let lastElapsed = "";
+  const isResting = () => !!cur && cur.phase === "rest" && cur.restShown;
+
   function tickClock() {
-    let s = "–";
-    if (cur && cur.startedAt) s = fmtElapsed(Date.now() + clockOffset - cur.startedAt);
+    let s = cur ? "–" : "";
+    if (isResting()) s = fmtDuration(cur.done.duration_ms);
+    else if (cur && cur.startedAt) s = fmtElapsed(Date.now() + clockOffset - cur.startedAt);
     if (s !== lastElapsed) {
       lastElapsed = s;
       el.elapsed.textContent = s;
@@ -423,12 +442,15 @@
 
   function renderNow() {
     el.stepTotal.textContent = n ? String(n) : "–";
-    el.lap.textContent = lap ? String(lap) : "–";
+    const shownLap = cur ? cur.lap : lap;
+    el.lap.textContent = shownLap ? String(shownLap) : "–";
+    el.result.replaceChildren();
     if (!cur || !n) {
       el.lang.textContent = n ? "idle" : "connecting";
-      el.files.textContent = " ";
+      el.files.textContent = n ? "waiting for the first step" : " ";
       el.stepN.textContent = "–";
-      el.size.textContent = "–";
+      el.size.textContent = "";
+      el.size.title = "";
       setPhase("idle");
       fitLang();
       return;
@@ -437,14 +459,43 @@
     el.stepN.textContent = String(cur.index + 1);
     el.lang.textContent = st.name;
     el.files.textContent = `${st.input} → ${st.output}`;
-    el.size.textContent = fmtBytes(st.size);
-    setPhase(cur.phase);
+    if (isResting()) {
+      renderResult(cur.done);
+    } else {
+      el.size.textContent = fmtBytes(st.size);
+      el.size.title = "program size";
+      setPhase(cur.phase === "rest" ? "run" : cur.phase);
+    }
     fitLang();
+  }
+
+  // Result readout for a finished step: status badge, output size, sha1, error.
+  function renderResult(r) {
+    const status = !r.ok ? "failed" : r.live ? "ok" : r.skipped ? "skipped" : "replayed";
+    setPhase(status);
+    if (r.skipped) el.phase.title = `replayed: ${r.skipped}`;
+    el.size.textContent = fmtBytes(r.output_bytes);
+    el.size.title = "output size";
+    const sha = (r.output_sha1 || "").slice(0, 7) || "–";
+    const verified = !!r.output_sha1 && r.output_sha1 === r.expected_sha1;
+    const s = document.createElement("span");
+    s.className = verified ? "sha ok" : "sha bad";
+    s.textContent = verified ? `sha1 ${sha} ✓ verified` : `sha1 ${sha} ≠ ${(r.expected_sha1 || "").slice(0, 7)}`;
+    s.title = `output ${r.output_sha1 || "-"}\nexpected ${r.expected_sha1 || "-"}`;
+    el.result.append(s);
+    if (!r.ok && r.error) {
+      const e = document.createElement("span");
+      e.className = "err";
+      e.textContent = r.error;
+      e.title = r.error;
+      el.result.append(e);
+    }
   }
 
   function setPhase(p) {
     el.phase.dataset.phase = p;
     el.phase.textContent = p;
+    el.phase.title = "";
   }
 
   // ---- source panel -------------------------------------------------------
@@ -567,7 +618,7 @@
   }
 
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden || !cur || cur.phase === "idle") return;
+    if (document.hidden || !cur) return;
     if (srcIndex !== cur.index) loadSource(cur.index);
   });
 
@@ -694,6 +745,8 @@
     el.tLast.title = L ? `lap ${L.lap}: ${L.live_steps} live, ${L.failed_steps} failed` : "";
     el.mode.textContent = mode || "–";
     el.mode.dataset.mode = mode;
+    el.toolchain.hidden = !toolchain;
+    el.toolchain.textContent = toolchain;
   }
 
   // Logs a completed step once; counts it too unless the totals for it
@@ -735,6 +788,7 @@
     const resized = steps.length !== n;
     n = steps.length;
     mode = d.mode || "";
+    toolchain = typeof d.toolchain === "string" ? d.toolchain : "";
     lap = d.lap || 1;
     clockOffset = (d.server_time_ms || Date.now()) - Date.now();
     results = new Array(n).fill(null);
@@ -752,16 +806,26 @@
 
     if (d.current && steps[d.current.index]) {
       const i = d.current.index;
-      cur = { index: i, key: keyOf(lap, i), phase: d.current.phase || "run", startedAt: d.current.started_at_ms || 0 };
+      cur = { index: i, key: keyOf(lap, i), lap, phase: d.current.phase || "run", startedAt: d.current.started_at_ms || 0, runAt: 0 };
+    } else if (newest >= 0) {
+      // between steps: rest on the newest finished step
+      const r = results[mod(newest)];
+      cur = restOn(r, 0);
+      cur.restShown = true;
+      if (r.lap !== visitedLap) {
+        visitedLap = r.lap;
+        visited.fill(0);
+        for (const h of history) if (h.lap === r.lap) visited[h.index] = 1;
+      }
     } else {
-      const next = newest + 1;
-      cur = n ? { index: mod(next), key: Math.max(0, next), phase: "idle", startedAt: 0 } : null;
+      cur = null;
     }
 
     // A new server process (new run_id) starts afresh. Without a run_id, a
     // relay position that went backwards is taken as a restart.
     const rid = typeof d.run_id === "string" ? d.run_id : null;
-    const restarted = rid !== null ? runId !== null && rid !== runId : !!cur && cur.key <= lastKey;
+    const backwards = cur ? (cur.phase === "rest" ? cur.key < lastKey : cur.key <= lastKey) : lastKey >= 0;
+    const restarted = rid !== null ? runId !== null && rid !== runId : backwards;
     if (restarted || resized) resetRun();
     runId = rid;
 
@@ -786,12 +850,16 @@
     renderNow();
     renderLog(false);
     renderTotals();
-    if (cur && cur.phase !== "idle") {
+    if (cur) {
       loadSource(cur.index);
-      announce();
+      if (cur.phase !== "rest") announce();
     } else {
       clearSource();
     }
+  }
+
+  function restOn(r, restAt) {
+    return { index: r.index, key: r.key, lap: r.lap, phase: "rest", startedAt: 0, runAt: 0, done: r, restAt, restShown: false };
   }
 
   function announce() {
@@ -808,7 +876,12 @@
       baseDirty = true;
     }
     lap = d.lap;
-    cur = { index: d.index, key, phase: steps[d.index].has_build ? "build" : "run", startedAt: d.at_ms };
+    // head travel time follows the cadence of step starts, rests included
+    if (cur && cur.key === key - 1 && cur.startedAt && d.at_ms > cur.startedAt) {
+      avgStepMs = avgStepMs * 0.8 + Math.min(600000, d.at_ms - cur.startedAt) * 0.2;
+    }
+    const build = steps[d.index].has_build;
+    cur = { index: d.index, key, lap: d.lap, phase: build ? "build" : "run", startedAt: d.at_ms, runAt: build ? 0 : performance.now() };
     moveHead(key);
     renderNow();
     renderTotals();
@@ -818,7 +891,9 @@
 
   function onPhase(d) {
     if (!cur || cur.key !== keyOf(d.lap, d.index)) return;
+    if (cur.phase === "rest") return;
     cur.phase = d.phase;
+    if (d.phase === "run") cur.runAt = performance.now();
     setPhase(d.phase);
   }
 
@@ -828,12 +903,21 @@
     results[d.index] = r;
     if (d.lap === visitedLap) visited[d.index] = 1;
     baseDirty = true;
-    if (typeof d.duration_ms === "number" && d.duration_ms > 0) {
-      avgStepMs = avgStepMs * 0.8 + d.duration_ms * 0.2;
-    }
     if (recordDone(r, true)) {
       renderLog(true);
       renderTotals();
+    }
+    if (!cur || r.key >= cur.key) {
+      const same = cur && cur.key === r.key;
+      const now = performance.now();
+      const runAt = same && cur.runAt ? cur.runAt : now;
+      const next = restOn(r, reduced ? now : runAt + RUN_MIN_DWELL_MS);
+      if (same) next.startedAt = cur.startedAt;
+      else moveHead(r.key);
+      cur = next;
+      // a step_done with no step_start seen (e.g. right after a snapshot) still
+      // needs its run phase on screen before the rest readout replaces it
+      if (!same) renderNow();
     }
   }
 
