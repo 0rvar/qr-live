@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clap::{Parser, ValueEnum};
-use qr_live::languages;
+use qr_live::languages::{self, Toolchain};
 use qr_live::relay::{self, Mode, Relay, RunConfig};
 use qr_live::server::{self, Assets};
 use tokio::sync::watch;
@@ -25,6 +25,9 @@ struct Args {
     listen: String,
     #[arg(long, value_enum, default_value = "replay")]
     mode: ModeArg,
+    /// Toolchain the step commands are written for.
+    #[arg(long, value_enum, default_value = "nix")]
+    toolchain: Toolchain,
     /// Directory holding the reference programs.
     #[arg(long, default_value = "./reference")]
     reference_dir: PathBuf,
@@ -77,12 +80,17 @@ async fn main() -> anyhow::Result<()> {
         ModeArg::Replay => Mode::Replay,
         ModeArg::Exec => Mode::Exec,
     };
-    let steps = relay::build_ring(&languages::get_languages(), &args.reference_dir, "ruby")?;
+    let steps = relay::build_ring(
+        &languages::get_languages_for(args.toolchain),
+        &args.reference_dir,
+        "ruby",
+    )?;
     let relay = Arc::new(Relay::new(steps, mode));
     eprintln!(
-        "ring of {} steps verified, mode {:?}, run {}",
+        "ring of {} steps verified, mode {:?}, toolchain {:?}, run {}",
         relay.steps.len(),
         mode,
+        args.toolchain,
         relay.run_id
     );
 

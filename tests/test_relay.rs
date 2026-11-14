@@ -55,6 +55,7 @@ fn fake_ring(dir: &Path, steps: &[FakeStep]) -> HashMap<String, QuineLanguageSpe
                     name: name.to_string(),
                     content: content.to_string(),
                 }),
+                work_input: None,
                 env: HashMap::new(),
                 command: step.command.clone(),
                 output: next.input.to_string(),

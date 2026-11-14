@@ -72,6 +72,8 @@ pub struct Step {
 /// What is needed to execute a step, and its reference programs in memory.
 #[derive(Clone, Debug, Default)]
 pub struct StepExec {
+    /// The file name the input is written under in the work directory.
+    pub input_name: String,
     pub build: Option<String>,
     pub build_file: Option<(String, String)>,
     pub env: Vec<(String, String)>,
@@ -172,6 +174,7 @@ pub fn build_ring(
                 has_build: spec.build.is_some(),
                 binary,
                 exec: StepExec {
+                    input_name: spec.work_input().to_string(),
                     build: spec.build.clone(),
                     build_file: spec
                         .build_file
@@ -497,7 +500,9 @@ async fn run_laps(relay: &Relay, config: &RunConfig) {
                                 skipped: Some(format!("tool not found: {tool}")),
                             }
                         }
-                        None => Outcome::Executed(exec_step(relay, lap, step, &input, config).await),
+                        None => Outcome::Executed(
+                            exec_step(Some((relay, lap)), step, &input, config).await,
+                        ),
                     };
                     let elapsed = started.elapsed();
                     if elapsed < config.min_step_time {
@@ -624,21 +629,83 @@ fn emit_phase(relay: &Relay, lap: u64, step: &Step, phase: Phase) {
     }));
 }
 
-/// The first program named by the step's build segments or command that is
-/// not found on PATH. Commands starting with `./` are built by the step and
-/// are not checked.
+/// Shell builtins that may lead a command segment.
+const SHELL_BUILTINS: &[&str] = &[
+    "cd", "exec", "exit", "export", "set", "true", "false", "ulimit", "umask", ":",
+];
+
+/// The first program named by a segment of the step's build or command that
+/// is not found on PATH. Segments are split on unquoted `&&`, `||`, `;` and
+/// `|`. Leading `NAME=value` assignments and shell builtins are skipped;
+/// programs starting with `./` are built by the step and are not checked.
 pub fn missing_tool(step: &Step) -> Option<String> {
-    let mut commands: Vec<&str> = Vec::new();
+    let mut scripts: Vec<&str> = Vec::new();
     if let Some(build) = &step.exec.build {
-        commands.extend(build.split("&&"));
+        scripts.push(build);
     }
-    commands.push(&step.exec.command);
-    commands
+    scripts.push(&step.exec.command);
+    scripts
         .into_iter()
-        .filter_map(|c| c.split_whitespace().next())
-        .filter(|word| !word.starts_with("./"))
+        .flat_map(command_segments)
+        .filter_map(|segment| {
+            segment
+                .split_whitespace()
+                .find(|word| !is_assignment(word))
+                .map(|word| word.trim_start_matches(['(', '{']).to_string())
+        })
+        .filter(|word| {
+            !word.is_empty() && !word.starts_with("./") && !SHELL_BUILTINS.contains(&word.as_str())
+        })
         .find(|word| !on_path(word))
-        .map(str::to_string)
+}
+
+/// Splits a shell script on `&&`, `||`, `;` and `|` outside quotes.
+fn command_segments(script: &str) -> Vec<String> {
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut chars = script.chars().peekable();
+    while let Some(c) = chars.next() {
+        match quote {
+            Some(q) => {
+                if c == q {
+                    quote = None;
+                }
+                current.push(c);
+            }
+            None => match c {
+                '\'' | '"' => {
+                    quote = Some(c);
+                    current.push(c);
+                }
+                ';' | '|' => {
+                    if c == '|' && chars.peek() == Some(&'|') {
+                        chars.next();
+                    }
+                    segments.push(std::mem::take(&mut current));
+                }
+                '&' if chars.peek() == Some(&'&') => {
+                    chars.next();
+                    segments.push(std::mem::take(&mut current));
+                }
+                _ => current.push(c),
+            },
+        }
+    }
+    segments.push(current);
+    segments
+}
+
+/// A shell variable assignment such as `LANG=C`.
+fn is_assignment(word: &str) -> bool {
+    match word.split_once('=') {
+        Some((name, _)) => {
+            !name.is_empty()
+                && !name.starts_with(|c: char| c.is_ascii_digit())
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        }
+        None => false,
+    }
 }
 
 fn on_path(program: &str) -> bool {
@@ -657,17 +724,24 @@ fn is_executable(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-struct ExecResult {
-    stdout: Bytes,
-    error: Option<String>,
+/// What executing a step produced. `error` is set when the build or command
+/// failed; the output hash is not checked here.
+pub struct ExecResult {
+    pub stdout: Bytes,
+    pub error: Option<String>,
+}
+
+/// Executes one step outside a relay, exactly as exec mode would, without
+/// emitting events or checking the output hash.
+pub async fn exec_once(step: &Step, input: &[u8], config: &RunConfig) -> ExecResult {
+    exec_step(None, step, input, config).await
 }
 
 /// Executes one step in a fresh temporary directory: writes the input and the
 /// build file, runs the build (if any) and then the command, and captures the
 /// command's stdout. The directory is removed afterwards.
 async fn exec_step(
-    relay: &Relay,
-    lap: u64,
+    events: Option<(&Relay, u64)>,
     step: &Step,
     input: &[u8],
     config: &RunConfig,
@@ -681,7 +755,7 @@ async fn exec_step(
             }
         }
     };
-    let result = exec_in_dir(relay, lap, step, input, config, dir.path()).await;
+    let result = exec_in_dir(events, step, input, config, dir.path()).await;
     let path = dir.path().to_path_buf();
     if let Err(e) = dir.close() {
         eprintln!("warning: cannot remove temp dir {}: {e}", path.display());
@@ -690,8 +764,7 @@ async fn exec_step(
 }
 
 async fn exec_in_dir(
-    relay: &Relay,
-    lap: u64,
+    events: Option<(&Relay, u64)>,
     step: &Step,
     input: &[u8],
     config: &RunConfig,
@@ -701,8 +774,8 @@ async fn exec_in_dir(
         stdout: Bytes::new(),
         error: Some(error),
     };
-    if let Err(e) = tokio::fs::write(dir.join(&step.input), input).await {
-        return fail(format!("cannot write {}: {e}", step.input));
+    if let Err(e) = tokio::fs::write(dir.join(&step.exec.input_name), input).await {
+        return fail(format!("cannot write {}: {e}", step.exec.input_name));
     }
     if let Some((name, content)) = &step.exec.build_file {
         if let Err(e) = tokio::fs::write(dir.join(name), content).await {
@@ -710,15 +783,20 @@ async fn exec_in_dir(
         }
     }
 
+    let phase = |phase: Phase| {
+        if let Some((relay, lap)) = events {
+            emit_phase(relay, lap, step, phase);
+        }
+    };
     if let Some(build) = &step.exec.build {
-        emit_phase(relay, lap, step, Phase::Build);
+        phase(Phase::Build);
         let output = run_shell(build, dir, &step.exec.env, config).await;
         if let Some(error) = output.error {
             return fail(format!("build: {error}"));
         }
     }
 
-    emit_phase(relay, lap, step, Phase::Run);
+    phase(Phase::Run);
     run_shell(&step.exec.command, dir, &step.exec.env, config).await
 }
 

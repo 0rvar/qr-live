@@ -31,6 +31,8 @@ scilab:
   command: scilab -nw -f QR.sci
   output: QR.sed
   output_sha1: d0db6ee06733f882c136eaea3a30f0d16e725ec9
+  upstream:
+    command: scilab-cli -nb -f QR.sci
 
 sed:
   input: QR.sed
@@ -43,6 +45,10 @@ shakespeare:
   command: shakespeare QR.spl
   output: QR.sl
   output_sha1: 0097dfccd51d8909376148f0db2a56a17ee3b274
+  upstream:
+    build: spl2c < QR.spl > QR.spl.c && gcc -z muldefs -o QR -I /usr/local/share/quine-relay/vendor/local/include -L /usr/local/share/quine-relay/vendor/local/lib QR.spl.c -lspl -lm
+    build_output: QR
+    command: ./QR
 
 s-lang:
   input: QR.sl
@@ -63,6 +69,8 @@ subleq:
   command: subleq QR.sq
   output: QR.ss
   output_sha1: 1404012a02770b750a997f1123dc8cd3c56dd5b6
+  upstream:
+    command: ruby /usr/local/share/quine-relay/vendor/subleq.rb QR.sq
 
 surgescript:
   input: QR.ss
@@ -87,6 +95,8 @@ thue:
   command: thue QR.t
   output: QR.ts
   output_sha1: 62042354594cf64957f189af221de0af9e84c7e9
+  upstream:
+    command: ruby /usr/local/share/quine-relay/vendor/thue.rb QR.t
 
 typescript:
   input: QR.ts
@@ -101,6 +111,8 @@ unlambda:
   command: unlambda QR.unl
   output: QR.vala
   output_sha1: cf31a9528f086474a00869c82b8cf4d3a33cc7de
+  upstream:
+    command: ruby /usr/local/share/quine-relay/vendor/unlambda.rb QR.unl
 
 vala:
   input: QR.vala
@@ -115,6 +127,10 @@ velato:
   command: velato QR.mid
   output: QR.v
   output_sha1: 927d478b82df7d8435d039368da9547017d3e02e
+  upstream:
+    build: mono /usr/local/share/quine-relay/vendor/local/bin/Vlt.exe /s QR.mid
+    build_output: QR.exe
+    command: mono QR.exe
 
 verilog:
   input: QR.v
@@ -146,12 +162,24 @@ visual_basic:
   command: dotnet run --project QR.vbproj
   output: QR.wasm
   output_sha1: 18dc4b83bfb5a761345e7aab6279c5c5e59fb1c9
+  upstream:
+    build_file:
+      name: QR.vbproj
+      content: |
+        <Project Sdk="Microsoft.NET.Sdk"
+          ><PropertyGroup
+            ><OutputType>Exe</OutputType><TargetFramework>net7.0</TargetFramework
+            ><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup
+          ><ItemGroup><Compile Include="QR.vb" /></ItemGroup
+        ></Project>
 
 webassembly_binary:
   input: QR.wasm
   command: wasmtime QR.wasm
   output: QR.wat
   output_sha1: 16955fc5f37a955e980863b84f3336509fd67e15
+  upstream:
+    command: node --experimental-wasi-unstable-preview1 /usr/local/share/quine-relay/vendor/wasi-runtime.js QR.wasm
 
 webassembly_text:
   input: QR.wat
@@ -160,12 +188,18 @@ webassembly_text:
   command: wasmtime QR.wasm
   output: QR.ws
   output_sha1: 22435ffc311b7ece02ce11169b14ae34e1e8d4a0
+  upstream:
+    build: wat2wasm QR.wat -o QR.wat.wasm
+    build_output: QR.wat.wasm
+    command: node --experimental-wasi-unstable-preview1 /usr/local/share/quine-relay/vendor/wasi-runtime.js QR.wat.wasm
 
 whitespace:
   input: QR.ws
   command: albus QR.ws
   output: QR.xslt
   output_sha1: 06ab8bbf85320972233fb8ee5c57f27813b26940
+  upstream:
+    command: ruby /usr/local/share/quine-relay/vendor/whitespace.rb QR.ws
 
 xslt:
   input: QR.xslt
@@ -218,12 +252,18 @@ afnix:
   command: afnix axi QR.als
   output: QR.aheui
   output_sha1: 7321f7fb8d1b178e63eb84e11f4b26734d806bb4
+  upstream:
+    env:
+      LD_LIBRARY_PATH: /usr/lib/afnix
+    command: axi QR.als
 
 aheui:
   input: QR.aheui
   command: goaheui QR.aheui
   output: QR.a68
   output_sha1: 380c69454e3dbf1fc3c3f1e5af7eb1900d4930b1
+  upstream:
+    command: ruby /usr/local/share/quine-relay/vendor/aheui.rb QR.aheui
 
 algol_68:
   input: QR.a68
@@ -236,6 +276,8 @@ ante:
   command: ante QR.ante
   output: QR.aj
   output_sha1: 7d8fbc21be9a40499a199c3a15daf386e9ba8099
+  upstream:
+    command: ruby /usr/local/share/quine-relay/vendor/ante.rb QR.ante
 
 aspect_j:
   input: QR.aj
@@ -297,12 +339,17 @@ blc8:
   command: blc8 QR.blc
   output: QR.bf
   output_sha1: da639bf7b8806c9c82d16a43af7908d949d43896
+  upstream:
+    work_input: QR.Blc
+    command: ruby /usr/local/share/quine-relay/vendor/blc.rb < QR.Blc
 
 brainfuck:
   input: QR.bf
   command: anyfuck QR.bf
   output: QR.c
   output_sha1: babf35f81cbb9a392b92281e834b628d143b1523
+  upstream:
+    command: ruby /usr/local/share/quine-relay/vendor/bf.rb QR.bf
 
 c:
   input: QR.c
@@ -336,6 +383,16 @@ csharp:
   command: dotnet run --project QR.csproj
   output: QR.chef
   output_sha1: 899ab814dad8161101f0b4053ac1c6a8b98177ba
+  upstream:
+    build_file:
+      name: QR.csproj
+      content: |
+        <Project Sdk="Microsoft.NET.Sdk"
+          ><PropertyGroup
+            ><OutputType>Exe</OutputType><TargetFramework>net7.0</TargetFramework
+            ><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup
+          ><ItemGroup><Compile Include="QR.cs" /></ItemGroup
+        ></Project>
 
 chef:
   input: QR.chef
@@ -344,6 +401,10 @@ chef:
   command: perl QR.chef.pl
   output: QR.clj
   output_sha1: 984519e4112b2a08ba7e6a3ff4b66d28e336c88d
+  upstream:
+    env:
+      PERL5LIB: /usr/local/share/quine-relay/vendor/local/lib/perl5
+    build: compilechef QR.chef QR.chef.pl
 
 clojure:
   input: QR.clj
@@ -385,7 +446,9 @@ crystal:
 
 d:
   input: QR.d
-  command: gdc -o QR QR.d
+  build: gdc -o QR QR.d
+  build_output: QR
+  command: ./QR
   output: QR.dfy
   output_sha1: d698fa1c1cbfac569ca0589dc94524fecb55a5a6
 
@@ -399,7 +462,9 @@ dafny:
 
 dc:
   input: QR.dc
-  command: dc QR.dc
+  # GNU dc exits 1 after printing the complete program; the output hash is
+  # what decides the step.
+  command: dc QR.dc || true
   output: QR.dhall
   output_sha1: 26cd1b4cdb41544a3ba00b2baa29fb0a017d7efa
 
@@ -443,12 +508,24 @@ fsharp:
   command: dotnet run --project QR.fsproj
   output: QR.false
   output_sha1: 6991c6b726914ba0c50461e5c13e5b92816f731b
+  upstream:
+    build_file:
+      name: QR.fsproj
+      content: |
+        <Project Sdk="Microsoft.NET.Sdk"
+          ><PropertyGroup
+            ><OutputType>Exe</OutputType><TargetFramework>net7.0</TargetFramework
+            ><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup
+          ><ItemGroup><Compile Include="QR.fsx" /></ItemGroup
+        ></Project>
 
 false:
   input: QR.false
   command: falsy QR.false
   output: QR.fl
   output_sha1: bb7ed64c79f386e26ae6d75cb665a4103d7f2566
+  upstream:
+    command: ruby /usr/local/share/quine-relay/vendor/false.rb QR.false
 
 flex:
   input: QR.fl
@@ -457,6 +534,8 @@ flex:
   command: ./QR
   output: QR.fish
   output_sha1: 45a23b1c041cf362c6518353c4322d92978da945
+  upstream:
+    build: flex -o QR.fl.c QR.fl && gcc -o QR QR.fl.c
 
 fish:
   input: QR.fish
@@ -527,6 +606,8 @@ golfscript:
   command: golfscript QR.gs
   output: QR.gpt
   output_sha1: 87f496ecc897b39b9ea268096bc7e091e4d414f8
+  upstream:
+    command: ruby /usr/local/share/quine-relay/vendor/golfscript.rb QR.gs
 
 g_portugol:
   input: QR.gpt
@@ -541,6 +622,8 @@ grass:
   command: grass QR.grass
   output: QR.groovy
   output_sha1: a74e5efd5ef3c10e8258c71f9271a6ff3eeff821
+  upstream:
+    command: ruby /usr/local/share/quine-relay/vendor/grass.rb QR.grass
 
 groovy:
   input: QR.groovy
@@ -559,6 +642,10 @@ haskell:
   command: runhaskell QR.hs
   output: QR.hx
   output_sha1: 36bac33d7b6c292a4c4fd8edd0b64c8ef07b3fb8
+  upstream:
+    build: ghc QR.hs
+    build_output: QR
+    command: ./QR
 
 haxe:
   input: QR.hx
@@ -583,6 +670,8 @@ intercal:
   command: ./QR
   output: QR.j
   output_sha1: b675630c93de3574f36f987610e0e0e4109bee5b
+  upstream:
+    build: ick -bfOc QR.i && gcc -static QR.c -I /usr/include/ick-* -o QR -lick
 
 jasmin:
   input: QR.j
@@ -618,6 +707,8 @@ jsfuck:
   command: node --stack-size=100000 QR.jsfuck
   output: QR.kt
   output_sha1: 8a3fb43aaae34492c32502f24dbea7120bba28c4
+  upstream:
+    command: ulimit -s unlimited && node --stack-size=100000 QR.jsfuck
 
 kotlin:
   input: QR.kt
@@ -646,6 +737,9 @@ lisaac:
   command: ./qr
   output: QR.ls
   output_sha1: f464a5803021b260bbaeed898165bed35d110cbe
+  upstream:
+    work_input: qr.li
+    build: lisaac qr.li
 
 livescript:
   input: QR.ls
@@ -666,12 +760,16 @@ lolcode:
   command: lolcode-lci QR.lol
   output: QR.lua
   output_sha1: b1e105a96329129c391b3f4cf8e040ed027eb95d
+  upstream:
+    command: lci QR.lol
 
 lua:
   input: QR.lua
   command: lua QR.lua
   output: QR.m4
   output_sha1: 7446271c49ee08169364d4cbd1eed367571a7f51
+  upstream:
+    command: lua5.3 QR.lua
 
 m4:
   input: QR.m4
@@ -704,6 +802,8 @@ modula_2:
   command: ./QR
   output: QR.il
   output_sha1: ca3971248c8c4ef93d84d67d96daee0bef57f15c
+  upstream:
+    build: gm2 -fiso QR.mod -o QR
 
 msil:
   input: QR.il
@@ -726,6 +826,8 @@ nasm:
   command: ./QR
   output: QR.neko
   output_sha1: 9b01f02c3a4277188d3de96360505fa805d6d783
+  upstream:
+    build: nasm -felf QR.asm && ld -m elf_i386 -o QR QR.o
 
 neko:
   input: QR.neko
@@ -756,6 +858,8 @@ objective_c:
   command: ./QR
   output: QR.ml
   output_sha1: d875384bf7732b1f9c584008a4bcff14e6503dfe
+  upstream:
+    build: gcc -o QR QR.m
 
 ocaml:
   input: QR.ml
@@ -768,12 +872,18 @@ octave:
   command: octave QR.octave
   output: QR.ook
   output_sha1: b60c2a4b7db6e936e4ffdd7f8901a9ddb96e01a5
+  upstream:
+    command: octave -qf QR.octave
 
 ook:
   input: QR.ook
   command: anyfuck QR.ook
   output: QR.gp
   output_sha1: 072561ddce43ce7b4fbadeb80e840a44ffb1f0d1
+  upstream:
+    build: ruby /usr/local/share/quine-relay/vendor/ook-to-bf.rb QR.ook QR.ook.bf
+    build_output: QR.ook.bf
+    command: ruby /usr/local/share/quine-relay/vendor/bf.rb QR.ook.bf
 
 pari_gp:
   input: QR.gp
@@ -874,3 +984,5 @@ rexx:
   command: rexx QR.rexx
   output: QR.rb
   output_sha1: 7241d1702966655bd1f80cc95051062ad82dbf5e
+  upstream:
+    command: rexx ./QR.rexx
