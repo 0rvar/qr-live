@@ -31,7 +31,9 @@
     conn: $("conn"),
     mode: $("mode"),
     log: $("log"),
-    tLaps: $("t-laps"),
+    tSteps: $("t-steps"),
+    totalsScope: $("totals-scope"),
+    announce: $("announce"),
     tDone: $("t-done"),
     tLive: $("t-live"),
     tReplay: $("t-replay"),
@@ -65,7 +67,12 @@
   let connected = false;
   let avgStepMs = 1500;
 
-  const totals = { live: 0, replay: 0, fail: 0, lastKey: -1, lapsDone: 0, firstLap: 0, lastLap: null };
+  // Server-wide totals: taken from snapshot.totals, then advanced by events.
+  // Without snapshot.totals they are counted from history and events instead.
+  const totals = { live: 0, replay: 0, fail: 0, lapsDone: 0, lastLap: null, fromServer: false };
+  let lastKey = -1; // newest step_done already counted and logged
+  let runId = null;
+  let cacheGen = 0; // bumped whenever the source cache is invalidated
   const log = []; // newest last, at most LOG_ROWS entries
 
   const keyOf = (l, i) => (l - 1) * n + i;
@@ -84,6 +91,7 @@
   let headPos = 0;
   let anim = null; // { from, to, t0, dur }
   let ripple = 0; // performance.now() of the last lap flash, 0 when none
+  let rippleFailed = false; // the flashing lap had failed steps
 
   const ang = (p) => -Math.PI / 2 + (p / n) * TAU;
 
@@ -91,7 +99,7 @@
     const cs = getComputedStyle(document.documentElement);
     const v = (name) => cs.getPropertyValue(name).trim();
     colors = {
-      fg: v("--fg"), dim: v("--dim"), faint: v("--faint"), line: v("--line"),
+      fg: v("--fg"), dim: v("--ring-dim"), faint: v("--faint"), line: v("--line"),
       head: v("--head"), live: v("--live"), replay: v("--replay"), fail: v("--fail"), build: v("--build"),
     };
   }
@@ -229,8 +237,10 @@
   const easeOut = (t) => 1 - Math.pow(1 - t, 3);
 
   function arcStroke(c, p0, p1, width, color, alpha) {
-    // canvas sweeps the long way round when the end angle precedes the start
-    if (ang(p1) - ang(p0) <= 1e-6) return;
+    // Skip sub-pixel arcs: canvas sweeps the long way round when the end angle
+    // precedes the start, and Chrome renders near-zero sweeps on the far side
+    // of the circle.
+    if ((ang(p1) - ang(p0)) * R < 0.5) return;
     c.globalAlpha = alpha;
     c.strokeStyle = color;
     c.lineWidth = width;
@@ -332,9 +342,11 @@
       ripple = 0;
       return;
     }
-    const e = 1 - t;
+    // a lap with failed steps flashes dimmer, in the failure colour
+    const e = (1 - t) * (rippleFailed ? 0.6 : 1);
     const g = easeOut(t);
-    ctx.strokeStyle = colors.head;
+    const color = rippleFailed ? colors.fail : colors.head;
+    ctx.strokeStyle = color;
     ctx.globalAlpha = 0.5 * e;
     ctx.lineWidth = hr * 2 * e + 0.5;
     ctx.beginPath();
@@ -349,7 +361,7 @@
     ctx.beginPath();
     ctx.arc(cx, cy, R * (1 - 0.45 * g), 0, TAU);
     ctx.stroke();
-    ctx.fillStyle = colors.head;
+    ctx.fillStyle = color;
     ctx.globalAlpha = 0.8 * e;
     for (let i = 0; i < n; i++) {
       const a = ang(i + g * 0.5);
@@ -440,47 +452,89 @@
   let srcCtl = null;
   let tw = { text: "", shown: 0 };
   let png = null; // { w, h, t0 }
-  let pngUrl = "";
+  let srcIndex = -1; // step whose source is shown or loading; -1 when none
+
+  // Program sources never change while a server runs, so each step's source
+  // is fetched at most once per run. One entry per ring index:
+  // { kind: "text" | "hex", text, note } or { kind: "png", url, w, h, note }.
+  // Only one PNG blob URL is held at a time.
+  const srcCache = new Map();
+  let pngCacheIndex = -1;
+
+  function clearSourceCache() {
+    for (const e of srcCache.values()) if (e.url) URL.revokeObjectURL(e.url);
+    srcCache.clear();
+    pngCacheIndex = -1;
+  }
+
+  function cachePut(index, entry) {
+    if (entry.kind === "png") {
+      if (pngCacheIndex >= 0 && pngCacheIndex !== index) {
+        const old = srcCache.get(pngCacheIndex);
+        if (old && old.url) URL.revokeObjectURL(old.url);
+        srcCache.delete(pngCacheIndex);
+      }
+      pngCacheIndex = index;
+    }
+    srcCache.set(index, entry);
+  }
 
   function clearSource() {
     if (srcCtl) srcCtl.abort();
     srcCtl = null;
+    srcIndex = -1;
     tw = { text: "", shown: 0 };
     codeNode.data = "";
     png = null;
     el.codeImg.style.backgroundImage = "";
-    if (pngUrl) {
-      URL.revokeObjectURL(pngUrl);
-      pngUrl = "";
-    }
     el.code.className = "";
     el.note.textContent = "";
+  }
+
+  function showSource(entry) {
+    el.note.textContent = entry.note || "";
+    if (entry.kind === "png") {
+      png = { w: entry.w, h: entry.h, t0: performance.now(), boxW: 0, drawW: 0 };
+      el.codeImg.style.backgroundImage = `url("${entry.url}")`;
+      el.code.className = "png";
+      sizePng();
+      return;
+    }
+    el.code.className = entry.kind === "hex" ? "hex" : "";
+    startTypewriter(entry.text);
   }
 
   function loadSource(index) {
     clearSource();
     const st = steps[index];
     if (!st) return;
+    const cached = srcCache.get(index);
+    if (cached) {
+      srcIndex = index;
+      showSource(cached);
+      return;
+    }
+    // A hidden tab fetches nothing; visibilitychange loads the current step.
+    if (document.hidden) return;
+    srcIndex = index;
     const ctl = new AbortController();
     srcCtl = ctl;
     const isPng = st.binary && /\.png$/i.test(st.input);
     const url = isPng ? `/api/source/${index}` : `/api/source/${index}?limit=${st.binary ? HEX_LIMIT : SRC_LIMIT}`;
-    fetch(url, { signal: ctl.signal, cache: "no-store" })
+    const gen = cacheGen;
+    fetch(url, { signal: ctl.signal })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return isPng ? res.blob() : res.arrayBuffer();
       })
-      .then((body) => {
-        if (ctl.signal.aborted) return;
-        if (isPng) return showPng(body, ctl);
-        const bytes = new Uint8Array(body);
-        if (st.binary) {
-          el.code.className = "hex";
-          el.note.textContent = `binary · first ${fmtBytes(bytes.length)} as hex`;
-          startTypewriter(hexdump(bytes));
-        } else {
-          startTypewriter(prepText(new TextDecoder("utf-8").decode(bytes)));
+      .then((body) => (isPng ? decodePng(body) : decodeBytes(st, body)))
+      .then((entry) => {
+        if (gen !== cacheGen) {
+          if (entry.url) URL.revokeObjectURL(entry.url);
+          return;
         }
+        cachePut(index, entry);
+        if (!ctl.signal.aborted && srcIndex === index) showSource(entry);
       })
       .catch((err) => {
         if (ctl.signal.aborted || err.name === "AbortError") return;
@@ -488,24 +542,34 @@
       });
   }
 
-  function showPng(blob, ctl) {
-    const url = URL.createObjectURL(blob);
-    const img = new Image();
-    img.onload = () => {
-      if (ctl.signal.aborted) {
-        URL.revokeObjectURL(url);
-        return;
-      }
-      pngUrl = url;
-      png = { w: img.naturalWidth, h: img.naturalHeight, t0: performance.now(), boxW: 0, drawW: 0 };
-      el.codeImg.style.backgroundImage = `url("${url}")`;
-      el.code.className = "png";
-      el.note.textContent = `image/png · ${png.w} × ${png.h} px`;
-      sizePng();
-    };
-    img.onerror = () => URL.revokeObjectURL(url);
-    img.src = url;
+  function decodeBytes(st, body) {
+    const bytes = new Uint8Array(body);
+    if (st.binary) {
+      return { kind: "hex", text: hexdump(bytes), note: `binary · first ${fmtBytes(bytes.length)} as hex` };
+    }
+    return { kind: "text", text: prepText(new TextDecoder("utf-8").decode(bytes.subarray(0, SRC_LIMIT))) };
   }
+
+  function decodePng(blob) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        resolve({ kind: "png", url, w: img.naturalWidth, h: img.naturalHeight,
+          note: `image/png · ${img.naturalWidth} × ${img.naturalHeight} px` });
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error("bad image"));
+      };
+      img.src = url;
+    });
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden || !cur || cur.phase === "idle") return;
+    if (srcIndex !== cur.index) loadSource(cur.index);
+  });
 
   function sizePng() {
     const box = el.code.getBoundingClientRect();
@@ -598,17 +662,20 @@
       li.removeAttribute("title");
       if (!r) continue;
       const k = kind(r);
-      li.className = k;
+      const skipped = r.ok && !r.live && r.skipped ? String(r.skipped) : "";
+      li.className = skipped ? `${k} skipped` : k;
       li.append(
         cell("g", GLYPH[k]),
         cell("n", r.name),
         cell("d", fmtDuration(r.duration_ms)),
         cell("o", fmtBytes(r.output_bytes)),
-        cell("h", r.ok ? (r.output_sha1 || "").slice(0, 7) : r.error || "failed"),
+        cell("h", !r.ok ? r.error || "failed" : skipped ? "skipped" : (r.output_sha1 || "").slice(0, 7)),
       );
-      li.title = r.ok
-        ? `lap ${r.lap} · ${r.live ? "live" : "replayed"} · sha1 ${r.output_sha1}`
-        : `lap ${r.lap} · ${r.error || "failed"} · got ${r.output_sha1 || "-"} expected ${r.expected_sha1}`;
+      li.title = !r.ok
+        ? `lap ${r.lap} · ${r.error || "failed"} · got ${r.output_sha1 || "-"} expected ${r.expected_sha1}`
+        : skipped
+          ? `lap ${r.lap} · replayed, skipped: ${skipped} · sha1 ${r.output_sha1}`
+          : `lap ${r.lap} · ${r.live ? "live" : "replayed"} · sha1 ${r.output_sha1}`;
     }
     if (fresh && !reduced && logRows[0].animate) {
       logRows[0].animate([{ opacity: 0.25 }, { opacity: 1 }], { duration: 450, easing: "ease-out" });
@@ -616,7 +683,8 @@
   }
 
   function renderTotals() {
-    el.tLaps.textContent = totals.firstLap && lap ? String(lap - totals.firstLap + 1) : "–";
+    el.tSteps.textContent = String(totals.live + totals.replay + totals.fail);
+    el.totalsScope.textContent = totals.fromServer ? "since server start" : "since page load";
     el.tDone.textContent = String(totals.lapsDone);
     el.tLive.textContent = String(totals.live);
     el.tReplay.textContent = String(totals.replay);
@@ -628,13 +696,24 @@
     el.mode.dataset.mode = mode;
   }
 
-  function countDone(r) {
-    if (r.key <= totals.lastKey) return false;
-    totals.lastKey = r.key;
-    totals[kind(r)]++;
+  // Logs a completed step once; counts it too unless the totals for it
+  // already came from the server.
+  function recordDone(r, count) {
+    if (r.key <= lastKey) return false;
+    lastKey = r.key;
+    if (count) totals[kind(r)]++;
     log.push(r);
     if (log.length > LOG_ROWS) log.splice(0, log.length - LOG_ROWS);
     return true;
+  }
+
+  function resetRun() {
+    Object.assign(totals, { live: 0, replay: 0, fail: 0, lapsDone: 0, lastLap: null, fromServer: false });
+    lastKey = -1;
+    log.length = 0;
+    cacheGen++;
+    clearSource();
+    clearSourceCache();
   }
 
   // ---- event handling -----------------------------------------------------
@@ -663,29 +742,41 @@
     visitedLap = lap;
 
     const history = Array.isArray(d.history) ? d.history.slice(-256) : [];
-    let lastKey = -1;
+    let newest = -1;
     for (const h of history) {
       const r = Object.assign({}, h, { key: keyOf(h.lap, h.index) });
       results[h.index] = r;
       if (h.lap === lap) visited[h.index] = 1;
-      lastKey = Math.max(lastKey, r.key);
+      newest = Math.max(newest, r.key);
     }
 
     if (d.current && steps[d.current.index]) {
       const i = d.current.index;
       cur = { index: i, key: keyOf(lap, i), phase: d.current.phase || "run", startedAt: d.current.started_at_ms || 0 };
     } else {
-      const next = lastKey + 1;
+      const next = newest + 1;
       cur = n ? { index: mod(next), key: Math.max(0, next), phase: "idle", startedAt: 0 } : null;
     }
 
-    // A relay that went backwards was restarted: start counting afresh.
-    if (cur && cur.key <= totals.lastKey) {
-      Object.assign(totals, { live: 0, replay: 0, fail: 0, lastKey: -1, lapsDone: 0, firstLap: 0, lastLap: null });
-      log.length = 0;
+    // A new server process (new run_id) starts afresh. Without a run_id, a
+    // relay position that went backwards is taken as a restart.
+    const rid = typeof d.run_id === "string" ? d.run_id : null;
+    const restarted = rid !== null ? runId !== null && rid !== runId : !!cur && cur.key <= lastKey;
+    if (restarted || resized) resetRun();
+    runId = rid;
+
+    const st = d.totals && typeof d.totals === "object" ? d.totals : null;
+    if (st) {
+      Object.assign(totals, {
+        live: st.steps_live | 0,
+        replay: st.steps_replayed | 0,
+        fail: st.steps_failed | 0,
+        lapsDone: st.laps_done | 0,
+        lastLap: st.last_lap || null,
+        fromServer: true,
+      });
     }
-    if (!totals.firstLap) totals.firstLap = lap;
-    for (const h of history) countDone(Object.assign({}, h, { key: keyOf(h.lap, h.index) }));
+    for (const h of history) recordDone(Object.assign({}, h, { key: keyOf(h.lap, h.index) }), !st);
 
     headPos = cur ? cur.key : 0;
     anim = null;
@@ -695,8 +786,17 @@
     renderNow();
     renderLog(false);
     renderTotals();
-    if (cur && cur.phase !== "idle") loadSource(cur.index);
-    else clearSource();
+    if (cur && cur.phase !== "idle") {
+      loadSource(cur.index);
+      announce();
+    } else {
+      clearSource();
+    }
+  }
+
+  function announce() {
+    if (!cur || !n) return;
+    el.announce.textContent = `${steps[cur.index].name}, step ${cur.index + 1} of ${n}`;
   }
 
   function onStepStart(d) {
@@ -713,6 +813,7 @@
     renderNow();
     renderTotals();
     loadSource(d.index);
+    announce();
   }
 
   function onPhase(d) {
@@ -730,7 +831,7 @@
     if (typeof d.duration_ms === "number" && d.duration_ms > 0) {
       avgStepMs = avgStepMs * 0.8 + d.duration_ms * 0.2;
     }
-    if (countDone(r)) {
+    if (recordDone(r, true)) {
       renderLog(true);
       renderTotals();
     }
@@ -742,9 +843,10 @@
     renderTotals();
     if (!reduced) {
       ripple = performance.now();
+      rippleFailed = (d.failed_steps | 0) > 0;
       if (el.lapWrap.animate) {
         el.lapWrap.animate(
-          [{ color: colors.head, transform: "scale(1.25)" }, { transform: "scale(1)" }],
+          [{ color: rippleFailed ? colors.fail : colors.head, transform: "scale(1.25)" }, { transform: "scale(1)" }],
           { duration: 900, easing: "ease-out" },
         );
       }
@@ -760,7 +862,8 @@
   function setConnected(ok) {
     connected = ok;
     el.stage.classList.toggle("offline", !ok);
-    el.conn.textContent = everConnected ? "reconnecting…" : "connecting…";
+    el.conn.hidden = ok;
+    el.conn.textContent = ok ? "" : everConnected ? "reconnecting…" : "connecting…";
   }
 
   function handler(fn) {

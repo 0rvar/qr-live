@@ -14,7 +14,7 @@
     <canvas id="ring" aria-hidden="true"></canvas>
     <div id="center">
       <div id="code" aria-hidden="true"><pre id="code-text"></pre><div id="code-img"></div></div>
-      <div id="now" aria-live="polite">
+      <div id="now">
         <div class="kicker"><span>step <b id="step-n">–</b> / <span id="step-total">–</span></span><span id="lap-wrap">lap <b id="lap">–</b></span></div>
         <div id="lang">connecting</div>
         <div id="files">&nbsp;</div>
@@ -27,6 +27,7 @@
       </div>
     </div>
     <div id="conn" role="status">connecting…</div>
+    <div id="announce" class="sr-only" aria-live="polite" aria-atomic="true"></div>
   </section>
   <aside id="panel">
     <header>
@@ -39,8 +40,9 @@
       <li><i class="sw fail"></i>failed</li>
       <li><i class="sw build"></i>building</li>
     </ul>
+    <h2 id="totals-scope">since server start</h2>
     <dl id="totals">
-      <div><dt>laps seen</dt><dd id="t-laps">–</dd></div>
+      <div><dt>steps run</dt><dd id="t-steps">–</dd></div>
       <div><dt>laps done</dt><dd id="t-done">–</dd></div>
       <div><dt class="c-live">live</dt><dd id="t-live">–</dd></div>
       <div><dt class="c-replay">replayed</dt><dd id="t-replay">–</dd></div>
