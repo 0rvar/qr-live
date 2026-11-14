@@ -46,7 +46,20 @@ async fn main() {
         docker_image: None,
         docker_args: Vec::new(),
         max_laps: Some(1),
+        max_failed_steps: None,
+        work_root: None,
     };
+
+    let unknown: Vec<&str> = args
+        .only
+        .iter()
+        .filter(|name| !steps.iter().any(|step| &step.name == *name))
+        .map(String::as_str)
+        .collect();
+    if !unknown.is_empty() {
+        eprintln!("unknown language(s) in --only: {}", unknown.join(", "));
+        std::process::exit(2);
+    }
 
     let started = Instant::now();
     let mut run = 0;
@@ -60,14 +73,18 @@ async fn main() {
         let error = match relay::missing_tool(step) {
             Some(tool) => Some(format!("tool not found: {tool}")),
             None => {
-                let result = relay::exec_once(step, &step.exec.input_bytes, &config).await;
-                let sha1 = format!("{:x}", Sha1::digest(&result.stdout));
-                match result.error {
-                    Some(e) => Some(e),
-                    None if sha1 != step.exec.expected_sha1 => {
-                        Some(format!("output sha1 mismatch: got {sha1}"))
+                match relay::exec_once(step, &step.exec.input_bytes, &config).await {
+                    Err(e) => Some(format!("{e:#}")),
+                    Ok(result) => {
+                        let sha1 = format!("{:x}", Sha1::digest(&result.stdout));
+                        match result.error {
+                            Some(e) => Some(e),
+                            None if sha1 != step.exec.expected_sha1 => {
+                                Some(format!("output sha1 mismatch: got {sha1}"))
+                            }
+                            None => None,
+                        }
                     }
-                    None => None,
                 }
             }
         };

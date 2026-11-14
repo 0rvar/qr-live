@@ -34,9 +34,14 @@ struct Args {
     /// Time per step in replay mode, in milliseconds.
     #[arg(long, default_value_t = 1500)]
     step_ms: u64,
-    /// Minimum time each step is shown in exec mode, in milliseconds.
+    /// Minimum time from one step's start to the next in exec mode, in
+    /// milliseconds. Steps report their real duration; the rest is idle.
     #[arg(long, default_value_t = 800)]
     min_step_ms: u64,
+    /// Exit with an error when a lap ends with more failed steps than this,
+    /// so a supervisor restarts the process. Unset never exits for failures.
+    #[arg(long)]
+    max_failed_steps: Option<usize>,
     /// Timeout for each build and run phase in exec mode, in seconds.
     #[arg(long, default_value_t = 600)]
     step_timeout_secs: u64,
@@ -85,7 +90,7 @@ async fn main() -> anyhow::Result<()> {
         &args.reference_dir,
         "ruby",
     )?;
-    let relay = Arc::new(Relay::new(steps, mode));
+    let relay = Arc::new(Relay::with_toolchain(steps, mode, args.toolchain));
     eprintln!(
         "ring of {} steps verified, mode {:?}, toolchain {:?}, run {}",
         relay.steps.len(),
@@ -103,6 +108,8 @@ async fn main() -> anyhow::Result<()> {
         docker_image: args.docker_image.clone(),
         docker_args: args.docker_args.clone(),
         max_laps: None,
+        max_failed_steps: args.max_failed_steps,
+        work_root: None,
     };
     let mut runner = tokio::spawn(relay::run(relay.clone(), config, shutdown_rx.clone()));
 
@@ -126,7 +133,8 @@ async fn main() -> anyhow::Result<()> {
         ended = &mut runner => {
             if !*shutdown_rx.borrow() {
                 match ended {
-                    Ok(()) => eprintln!("runner stopped unexpectedly"),
+                    Ok(Ok(())) => eprintln!("runner stopped unexpectedly"),
+                    Ok(Err(e)) => eprintln!("runner gave up: {e:#}"),
                     Err(e) => eprintln!("runner failed: {e}"),
                 }
                 std::process::exit(1);

@@ -88,6 +88,8 @@ fn config(mode: Mode, laps: u64) -> RunConfig {
         docker_image: None,
         docker_args: Vec::new(),
         max_laps: Some(laps),
+        max_failed_steps: None,
+        work_root: None,
     }
 }
 
@@ -102,7 +104,7 @@ async fn run_to_end(
     let relay = Arc::new(Relay::new(steps, config.mode));
     let (mut rx, _) = relay.subscribe();
     let (_shutdown_tx, shutdown_rx) = watch::channel(false);
-    relay::run(relay.clone(), config, shutdown_rx).await;
+    relay::run(relay.clone(), config, shutdown_rx).await.unwrap();
     let mut events = Vec::new();
     loop {
         match rx.try_recv() {
@@ -547,6 +549,65 @@ async fn body_bytes(response: axum::http::Response<Body>) -> Vec<u8> {
         .await
         .unwrap()
         .to_vec()
+}
+
+#[tokio::test]
+async fn status_endpoint_reports_totals_and_recent_failures() {
+    let dir = tempfile::tempdir().unwrap();
+    let specs = fake_ring(dir.path(), &abc("printf REAL"));
+    let (relay, _) = run_to_end(dir.path(), &specs, "a", config(Mode::Exec, 2)).await;
+    let (router, _shutdown) = test_router(relay.clone());
+
+    let response = get(&router, "/api/status", None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let status: serde_json::Value = serde_json::from_slice(&body_bytes(response).await).unwrap();
+    let mut keys: Vec<&str> = status.as_object().unwrap().keys().map(String::as_str).collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        [
+            "current",
+            "lap",
+            "mode",
+            "recent_failures",
+            "run_id",
+            "server_time_ms",
+            "started_at_ms",
+            "toolchain",
+            "totals"
+        ]
+    );
+    assert_eq!(status["run_id"], relay.run_id.as_str());
+    assert_eq!(status["mode"], "exec");
+    assert_eq!(status["toolchain"], "nix");
+    assert_eq!(status["lap"], 3);
+    assert!(status["current"].is_null());
+    assert!(status["started_at_ms"].as_u64().unwrap() <= status["server_time_ms"].as_u64().unwrap());
+    assert_eq!(status["totals"]["laps_done"], 2);
+    assert_eq!(status["totals"]["steps_failed"], 2);
+    assert_eq!(status["totals"]["last_lap"]["failed_steps"], 1);
+    let failures = status["recent_failures"].as_array().unwrap();
+    assert_eq!(failures.len(), 2);
+    for (failure, lap) in failures.iter().zip([1, 2]) {
+        assert_eq!(failure["name"], "a");
+        assert_eq!(failure["lap"], lap);
+        assert_eq!(failure["ok"], false);
+    }
+    assert_eq!(relay.snapshot()["toolchain"], "nix");
+}
+
+#[tokio::test]
+async fn recent_failures_keep_only_the_newest() {
+    let dir = tempfile::tempdir().unwrap();
+    let specs = fake_ring(dir.path(), &abc("printf REAL"));
+    let laps = relay::RECENT_FAILURES_LEN as u64 + 4;
+    let (relay, _) = run_to_end(dir.path(), &specs, "a", config(Mode::Exec, laps)).await;
+    let status = relay.status();
+    let failures = status["recent_failures"].as_array().unwrap();
+    assert_eq!(failures.len(), relay::RECENT_FAILURES_LEN);
+    assert_eq!(failures[0]["lap"], 5);
+    assert_eq!(failures[failures.len() - 1]["lap"], laps);
 }
 
 #[tokio::test]

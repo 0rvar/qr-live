@@ -3,7 +3,7 @@
 //! that drives the ring forever in replay or exec mode.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -16,10 +16,12 @@ use sha1::{Digest, Sha1};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::{broadcast, watch};
 
-use crate::languages::QuineLanguageSpec;
+use crate::languages::{QuineLanguageSpec, Toolchain};
 
 /// Number of finished steps kept in the snapshot history.
 pub const HISTORY_LEN: usize = 256;
+/// Number of failed steps kept for `/api/status`.
+pub const RECENT_FAILURES_LEN: usize = 16;
 /// Capacity of the broadcast channel feeding SSE subscribers.
 pub const CHANNEL_CAPACITY: usize = 1024;
 /// Maximum length of the `error` string in a `step_done` event.
@@ -302,6 +304,8 @@ struct RelayState {
     lap: u64,
     current: Option<Current>,
     history: VecDeque<StepDone>,
+    /// The last `RECENT_FAILURES_LEN` steps with `ok == false`.
+    recent_failures: VecDeque<StepDone>,
     totals: Totals,
 }
 
@@ -309,12 +313,27 @@ struct RelayState {
 pub struct Snapshot<'a> {
     pub run_id: &'a str,
     pub mode: Mode,
+    pub toolchain: Toolchain,
     pub server_time_ms: u64,
     pub lap: u64,
     pub steps: &'a [Step],
     pub current: Option<Current>,
     pub history: Vec<StepDone>,
     pub totals: Totals,
+}
+
+/// The health summary served at `/api/status`.
+#[derive(Debug, Serialize)]
+pub struct Status<'a> {
+    pub run_id: &'a str,
+    pub mode: Mode,
+    pub toolchain: Toolchain,
+    pub started_at_ms: u64,
+    pub server_time_ms: u64,
+    pub lap: u64,
+    pub current: Option<Current>,
+    pub totals: Totals,
+    pub recent_failures: Vec<StepDone>,
 }
 
 /// Owns the ring, the shared state and the broadcast channel. Every state
@@ -324,27 +343,57 @@ pub struct Snapshot<'a> {
 pub struct Relay {
     pub steps: Vec<Step>,
     pub mode: Mode,
+    /// The toolchain the step commands are written for.
+    pub toolchain: Toolchain,
     /// Unique per relay instance, so clients can tell a restarted server.
     pub run_id: String,
+    /// When this relay instance was created.
+    pub started_at_ms: u64,
     tx: broadcast::Sender<RelayEvent>,
     state: Mutex<RelayState>,
 }
 
 impl Relay {
+    /// A relay for the nix toolchain.
     pub fn new(steps: Vec<Step>, mode: Mode) -> Self {
+        Self::with_toolchain(steps, mode, Toolchain::Nix)
+    }
+
+    pub fn with_toolchain(steps: Vec<Step>, mode: Mode, toolchain: Toolchain) -> Self {
         let (tx, _) = broadcast::channel(CHANNEL_CAPACITY);
+        let started_at_ms = now_ms();
         Relay {
             steps,
             mode,
-            run_id: format!("{:x}-{:016x}", now_ms(), random_u64()),
+            toolchain,
+            run_id: format!("{:x}-{:016x}", started_at_ms, random_u64()),
+            started_at_ms,
             tx,
             state: Mutex::new(RelayState {
                 lap: 1,
                 current: None,
                 history: VecDeque::with_capacity(HISTORY_LEN),
+                recent_failures: VecDeque::with_capacity(RECENT_FAILURES_LEN),
                 totals: Totals::default(),
             }),
         }
+    }
+
+    /// The health summary, serialized as JSON.
+    pub fn status(&self) -> serde_json::Value {
+        let state = self.state.lock().unwrap();
+        serde_json::to_value(Status {
+            run_id: &self.run_id,
+            mode: self.mode,
+            toolchain: self.toolchain,
+            started_at_ms: self.started_at_ms,
+            server_time_ms: now_ms(),
+            lap: state.lap,
+            current: state.current.clone(),
+            totals: state.totals.clone(),
+            recent_failures: state.recent_failures.iter().cloned().collect(),
+        })
+        .expect("status serializes")
     }
 
     /// Subscribes to events and returns the snapshot that precedes the first
@@ -365,6 +414,7 @@ impl Relay {
         serde_json::to_value(Snapshot {
             run_id: &self.run_id,
             mode: self.mode,
+            toolchain: self.toolchain,
             server_time_ms: now_ms(),
             lap: state.lap,
             steps: &self.steps,
@@ -402,6 +452,12 @@ impl Relay {
                     state.history.pop_front();
                 }
                 state.history.push_back(e.clone());
+                if !e.ok {
+                    if state.recent_failures.len() == RECENT_FAILURES_LEN {
+                        state.recent_failures.pop_front();
+                    }
+                    state.recent_failures.push_back(e.clone());
+                }
                 let totals = &mut state.totals;
                 if !e.ok {
                     totals.steps_failed += 1;
@@ -430,7 +486,9 @@ pub struct RunConfig {
     pub mode: Mode,
     /// Time per step in replay mode.
     pub step_time: Duration,
-    /// Minimum time each step stays on screen in exec mode.
+    /// Minimum time from one step's start to the next in exec mode. A step
+    /// reports its real duration; the rest of this time passes between its
+    /// `step_done` and the next `step_start`.
     pub min_step_time: Duration,
     /// Deadline for each of the build and run phases in exec mode.
     pub step_timeout: Duration,
@@ -440,20 +498,33 @@ pub struct RunConfig {
     pub docker_args: Vec<String>,
     /// Stop after this many laps; `None` runs forever.
     pub max_laps: Option<u64>,
+    /// Stop with an error when a lap ends with more failed steps than this;
+    /// `None` never stops for failures.
+    pub max_failed_steps: Option<usize>,
+    /// Directory the per-step work directories are created in; `None` uses
+    /// the system temp directory.
+    pub work_root: Option<PathBuf>,
 }
 
 /// Runs the relay until shutdown is signalled (or `max_laps` is reached).
-/// Stopping drops any running step, which kills its process group; any
-/// container still registered is then removed before this returns.
-pub async fn run(relay: Arc<Relay>, config: RunConfig, mut shutdown: watch::Receiver<bool>) {
-    tokio::select! {
-        _ = run_laps(&relay, &config) => {}
-        _ = shutdown.wait_for(|stop| *stop) => {}
-    }
+/// Returns an error when the runner gives up: a lap ended with more than
+/// `max_failed_steps` failures, or a step's work directory could not be
+/// created. Stopping drops any running step, which kills its process group;
+/// any container still registered is then removed before this returns.
+pub async fn run(
+    relay: Arc<Relay>,
+    config: RunConfig,
+    mut shutdown: watch::Receiver<bool>,
+) -> anyhow::Result<()> {
+    let result = tokio::select! {
+        result = run_laps(&relay, &config) => result,
+        _ = shutdown.wait_for(|stop| *stop) => Ok(()),
+    };
     let leftover: Vec<String> = LIVE_CONTAINERS.lock().unwrap().drain().collect();
     for name in leftover {
         force_remove_container(&name).await;
     }
+    result
 }
 
 enum Outcome {
@@ -461,17 +532,25 @@ enum Outcome {
     Executed(ExecResult),
 }
 
-async fn run_laps(relay: &Relay, config: &RunConfig) {
+async fn run_laps(relay: &Relay, config: &RunConfig) -> anyhow::Result<()> {
     let steps = &relay.steps;
     let mut lap = relay.state.lock().unwrap().lap;
     let mut laps_run = 0;
     let mut program: Option<Bytes> = None;
+    // In exec mode the next step does not start before this instant.
+    let mut next_start: Option<Instant> = None;
     loop {
-        let lap_started = Instant::now();
+        // Measured from the lap's first step_start, so the hold left over from
+        // the previous lap's last step is not counted.
+        let mut lap_started: Option<Instant> = None;
         let mut live_steps = 0;
         let mut failed_steps = 0;
         for step in steps {
+            if let Some(at) = next_start.take() {
+                tokio::time::sleep_until(at.into()).await;
+            }
             let started = Instant::now();
+            lap_started.get_or_insert(started);
             relay.emit(RelayEvent::StepStart(StepStart {
                 lap,
                 index: step.index,
@@ -485,6 +564,7 @@ async fn run_laps(relay: &Relay, config: &RunConfig) {
                     Outcome::Replayed { skipped: None }
                 }
                 Mode::Exec => {
+                    next_start = Some(started + config.min_step_time);
                     let input = program
                         .take()
                         .unwrap_or_else(|| step.exec.input_bytes.clone());
@@ -493,7 +573,7 @@ async fn run_laps(relay: &Relay, config: &RunConfig) {
                     } else {
                         None
                     };
-                    let outcome = match missing {
+                    match missing {
                         Some(tool) => {
                             replay_step(relay, lap, step, config.min_step_time).await;
                             Outcome::Replayed {
@@ -501,14 +581,13 @@ async fn run_laps(relay: &Relay, config: &RunConfig) {
                             }
                         }
                         None => Outcome::Executed(
-                            exec_step(Some((relay, lap)), step, &input, config).await,
+                            exec_step(Some((relay, lap)), step, &input, config)
+                                .await
+                                .with_context(|| {
+                                    format!("lap {lap} step {} {}", step.index, step.name)
+                                })?,
                         ),
-                    };
-                    let elapsed = started.elapsed();
-                    if elapsed < config.min_step_time {
-                        tokio::time::sleep(config.min_step_time - elapsed).await;
                     }
-                    outcome
                 }
             };
 
@@ -589,7 +668,7 @@ async fn run_laps(relay: &Relay, config: &RunConfig) {
 
         let lap_done = LapDone {
             lap,
-            duration_ms: lap_started.elapsed().as_millis() as u64,
+            duration_ms: lap_started.map_or(0, |t| t.elapsed().as_millis() as u64),
             live_steps,
             failed_steps,
         };
@@ -598,10 +677,16 @@ async fn run_laps(relay: &Relay, config: &RunConfig) {
             lap_done.lap, lap_done.duration_ms, lap_done.live_steps, lap_done.failed_steps
         );
         relay.emit(RelayEvent::LapDone(lap_done));
+        if let Some(max) = config.max_failed_steps {
+            if failed_steps > max {
+                eprintln!("lap {lap}: {failed_steps} failed steps exceed --max-failed-steps {max}, stopping");
+                anyhow::bail!("lap {lap} had {failed_steps} failed steps, more than {max}");
+            }
+        }
         lap += 1;
         laps_run += 1;
         if config.max_laps.is_some_and(|max| laps_run >= max) {
-            return;
+            return Ok(());
         }
     }
 }
@@ -732,35 +817,40 @@ pub struct ExecResult {
 }
 
 /// Executes one step outside a relay, exactly as exec mode would, without
-/// emitting events or checking the output hash.
-pub async fn exec_once(step: &Step, input: &[u8], config: &RunConfig) -> ExecResult {
+/// emitting events or checking the output hash. Fails only when the work
+/// directory cannot be created.
+pub async fn exec_once(
+    step: &Step,
+    input: &[u8],
+    config: &RunConfig,
+) -> anyhow::Result<ExecResult> {
     exec_step(None, step, input, config).await
 }
 
 /// Executes one step in a fresh temporary directory: writes the input and the
 /// build file, runs the build (if any) and then the command, and captures the
-/// command's stdout. The directory is removed afterwards.
+/// command's stdout. The directory is removed afterwards. Failing to create
+/// the directory is an error rather than a failed step: it means the host,
+/// not the step, is broken.
 async fn exec_step(
     events: Option<(&Relay, u64)>,
     step: &Step,
     input: &[u8],
     config: &RunConfig,
-) -> ExecResult {
-    let dir = match tempfile::Builder::new().prefix("qr-live-").tempdir() {
-        Ok(dir) => dir,
-        Err(e) => {
-            return ExecResult {
-                stdout: Bytes::new(),
-                error: Some(format!("cannot create temp dir: {e}")),
-            }
-        }
-    };
+) -> anyhow::Result<ExecResult> {
+    let mut builder = tempfile::Builder::new();
+    builder.prefix("qr-live-");
+    let dir = match &config.work_root {
+        Some(root) => builder.tempdir_in(root),
+        None => builder.tempdir(),
+    }
+    .context("cannot create the step's work directory")?;
     let result = exec_in_dir(events, step, input, config, dir.path()).await;
     let path = dir.path().to_path_buf();
     if let Err(e) = dir.close() {
         eprintln!("warning: cannot remove temp dir {}: {e}", path.display());
     }
-    result
+    Ok(result)
 }
 
 async fn exec_in_dir(

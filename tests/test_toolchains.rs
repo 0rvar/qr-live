@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use qr_live::languages::{self, parse_languages, QuineLanguageSpec, Toolchain};
-use qr_live::relay::{self, Mode, Relay, RelayEvent, RunConfig};
+use qr_live::relay::{self, now_ms, Mode, Relay, RelayEvent, RunConfig};
 use sha1::{Digest, Sha1};
 use tokio::sync::watch;
 
@@ -130,6 +130,23 @@ fn empty_upstream_build_removes_the_build_step() {
 }
 
 #[test]
+fn unknown_key_in_a_language_entry_is_rejected() {
+    let yaml = r#"
+x:
+  input: a
+  command: c
+  output: a
+  output_sha1: 0
+  upstrem:
+    command: typo
+"#;
+    for toolchain in [Toolchain::Nix, Toolchain::Upstream] {
+        let error = format!("{:#}", parse_languages(yaml, toolchain).unwrap_err());
+        assert!(error.contains("upstrem"), "{error}");
+    }
+}
+
+#[test]
 fn unknown_field_in_upstream_block_is_rejected() {
     let yaml = r#"
 x:
@@ -187,7 +204,8 @@ fn upstream_toolchain_keeps_reference_names_and_renames_only_the_work_file() {
     assert_eq!(lisaac.exec.input_name, "qr.li");
 }
 
-/// A one-step ring whose command prints its own input file.
+/// A ring of one step named "a" whose reference input is `a.txt` with the
+/// content "A", and which must output "A" again.
 fn one_step_ring(dir: &Path, work_input: Option<&str>, command: &str) -> Vec<relay::Step> {
     std::fs::write(dir.join("a.txt"), "A").unwrap();
     let spec = QuineLanguageSpec {
@@ -214,21 +232,65 @@ fn exec_config(min_step_time: Duration) -> RunConfig {
         docker_image: None,
         docker_args: Vec::new(),
         max_laps: Some(1),
+        max_failed_steps: None,
+        work_root: None,
     }
 }
 
+/// Runs the relay to completion and returns its result and every event.
+async fn run_collect(
+    relay: &Arc<Relay>,
+    config: RunConfig,
+) -> (anyhow::Result<()>, Vec<RelayEvent>) {
+    let (mut rx, _) = relay.subscribe();
+    let (_tx, shutdown) = watch::channel(false);
+    let result = relay::run(relay.clone(), config, shutdown).await;
+    let mut events = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        events.push(event);
+    }
+    (result, events)
+}
+
 #[tokio::test]
-async fn exec_writes_the_input_under_its_work_name() {
+async fn exec_writes_the_input_under_its_work_name_only() {
     let dir = tempfile::tempdir().unwrap();
-    let steps = one_step_ring(dir.path(), Some("A.TXT"), "cat A.TXT");
+    let steps = one_step_ring(
+        dir.path(),
+        Some("renamed-input.txt"),
+        "test ! -e a.txt && cat renamed-input.txt",
+    );
     let result = relay::exec_once(
         &steps[0],
         &steps[0].exec.input_bytes,
         &exec_config(Duration::ZERO),
     )
-    .await;
+    .await
+    .unwrap();
     assert_eq!(result.error, None);
     assert_eq!(&result.stdout[..], b"A");
+}
+
+#[tokio::test]
+async fn work_name_need_not_exist_in_the_reference_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let steps = one_step_ring(dir.path(), Some("work-only.txt"), "cat work-only.txt");
+    assert!(!dir.path().join("work-only.txt").exists());
+    assert_eq!(steps[0].input, "a.txt");
+    assert_eq!(steps[0].exec.input_name, "work-only.txt");
+    assert_eq!(&steps[0].exec.input_bytes[..], b"A");
+
+    let relay = Arc::new(Relay::new(steps, Mode::Exec));
+    let (result, events) = run_collect(&relay, exec_config(Duration::ZERO)).await;
+    result.unwrap();
+    let done = events
+        .iter()
+        .find_map(|e| match e {
+            RelayEvent::StepDone(d) => Some(d),
+            _ => None,
+        })
+        .unwrap();
+    assert!(done.live && done.ok, "{done:?}");
 }
 
 #[test]
@@ -254,30 +316,182 @@ fn missing_tool_skips_assignments_and_builtins_and_checks_every_segment() {
     );
 }
 
+/// A two-step ring a.txt -> b.txt -> a.txt where each step prints the
+/// other's reference with `command` prefixed.
+fn two_step_ring(dir: &Path, prefix_a: &str) -> Vec<relay::Step> {
+    std::fs::write(dir.join("a.txt"), "A").unwrap();
+    std::fs::write(dir.join("b.txt"), "B").unwrap();
+    let spec = |input: &str, output: &str, command: String, sha: &[u8]| QuineLanguageSpec {
+        input: input.into(),
+        work_input: None,
+        build: None,
+        build_output: None,
+        build_file: None,
+        env: HashMap::new(),
+        command,
+        output: output.into(),
+        output_sha1: sha1_hex(sha),
+    };
+    let specs = HashMap::from([
+        (
+            "a".to_string(),
+            spec("a.txt", "b.txt", format!("{prefix_a}printf B"), b"B"),
+        ),
+        (
+            "b".to_string(),
+            spec("b.txt", "a.txt", "printf A".to_string(), b"A"),
+        ),
+    ]);
+    relay::build_ring(&specs, dir, "a").unwrap()
+}
+
 #[tokio::test]
-async fn min_step_time_is_a_floor_not_an_addition() {
+async fn fast_step_reports_its_real_duration_and_the_next_start_waits() {
     let dir = tempfile::tempdir().unwrap();
-    let steps = one_step_ring(dir.path(), None, "sleep 0.3; cat a.txt");
-    let relay = Arc::new(Relay::new(steps, Mode::Exec));
-    let (mut rx, _) = relay.subscribe();
-    let (_tx, shutdown) = watch::channel(false);
-    relay::run(
-        relay.clone(),
-        exec_config(Duration::from_millis(600)),
-        shutdown,
-    )
-    .await;
-    let mut durations = Vec::new();
-    while let Ok(event) = rx.try_recv() {
-        if let RelayEvent::StepDone(done) = event {
-            assert!(done.live && done.ok, "{done:?}");
-            durations.push(done.duration_ms);
+    let relay = Arc::new(Relay::new(two_step_ring(dir.path(), ""), Mode::Exec));
+    let mut config = exec_config(Duration::from_millis(500));
+    config.max_laps = Some(2);
+
+    let runner = tokio::spawn({
+        let relay = relay.clone();
+        let config = config.clone();
+        async move { run_collect(&relay, config).await }
+    });
+    // Between the first step_done and the second step_start nothing runs.
+    let mut saw_idle = false;
+    for _ in 0..40 {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let snapshot = relay.snapshot();
+        if !snapshot["history"].as_array().unwrap().is_empty() && snapshot["current"].is_null() {
+            saw_idle = true;
+            break;
         }
     }
-    assert_eq!(durations.len(), 1);
-    assert!(
-        (600..850).contains(&durations[0]),
-        "a 300ms step with a 600ms floor took {}ms",
-        durations[0]
+    let (result, events) = runner.await.unwrap();
+    result.unwrap();
+    assert!(saw_idle, "current was never null between steps");
+
+    let starts: Vec<u64> = events
+        .iter()
+        .filter_map(|e| match e {
+            RelayEvent::StepStart(s) => Some(s.at_ms),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(starts.len(), 4);
+    for pair in starts.windows(2) {
+        assert!(
+            pair[1] - pair[0] >= 500,
+            "steps started {}ms apart",
+            pair[1] - pair[0]
+        );
+    }
+    for event in &events {
+        if let RelayEvent::StepDone(done) = event {
+            assert!(done.live && done.ok, "{done:?}");
+            assert!(
+                done.duration_ms < 300,
+                "a printf step reported {}ms",
+                done.duration_ms
+            );
+        }
+    }
+    // lap_done follows the lap's last step_done with no hold in between.
+    let kinds: Vec<&str> = events.iter().map(RelayEvent::name).collect();
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|k| **k != "phase")
+            .copied()
+            .collect::<Vec<_>>(),
+        [
+            "step_start",
+            "step_done",
+            "step_start",
+            "step_done",
+            "lap_done",
+            "step_start",
+            "step_done",
+            "step_start",
+            "step_done",
+            "lap_done",
+        ]
     );
+    for pair in events.windows(2) {
+        if let (RelayEvent::StepDone(done), RelayEvent::LapDone(lap)) = (&pair[0], &pair[1]) {
+            assert!(
+                lap.duration_ms >= 500 && lap.duration_ms < 500 + 300,
+                "{lap:?}"
+            );
+            assert!(done.at_ms <= now_ms());
+        }
+    }
+}
+
+#[tokio::test]
+async fn slow_step_is_not_held_beyond_the_floor() {
+    let dir = tempfile::tempdir().unwrap();
+    let relay = Arc::new(Relay::new(
+        two_step_ring(dir.path(), "sleep 0.4; "),
+        Mode::Exec,
+    ));
+    let (result, events) = run_collect(&relay, exec_config(Duration::from_millis(200))).await;
+    result.unwrap();
+    let starts: Vec<u64> = events
+        .iter()
+        .filter_map(|e| match e {
+            RelayEvent::StepStart(s) => Some(s.at_ms),
+            _ => None,
+        })
+        .collect();
+    let gap = starts[1] - starts[0];
+    assert!(
+        (400..1000).contains(&gap),
+        "a 400ms step with a 200ms floor took {gap}ms"
+    );
+}
+
+#[tokio::test]
+async fn too_many_failed_steps_in_a_lap_stop_the_runner() {
+    let dir = tempfile::tempdir().unwrap();
+    let relay = Arc::new(Relay::new(
+        two_step_ring(dir.path(), "false && "),
+        Mode::Exec,
+    ));
+    let mut config = exec_config(Duration::ZERO);
+    config.max_laps = None;
+    config.max_failed_steps = Some(0);
+    let (result, events) = run_collect(&relay, config).await;
+    let error = result.unwrap_err().to_string();
+    assert!(error.contains("1 failed steps"), "{error}");
+    let laps = events.iter().filter(|e| e.name() == "lap_done").count();
+    assert_eq!(laps, 1);
+}
+
+#[tokio::test]
+async fn failures_within_the_limit_keep_the_runner_going() {
+    let dir = tempfile::tempdir().unwrap();
+    let relay = Arc::new(Relay::new(
+        two_step_ring(dir.path(), "false && "),
+        Mode::Exec,
+    ));
+    let mut config = exec_config(Duration::ZERO);
+    config.max_laps = Some(3);
+    config.max_failed_steps = Some(1);
+    let (result, events) = run_collect(&relay, config).await;
+    result.unwrap();
+    assert_eq!(events.iter().filter(|e| e.name() == "lap_done").count(), 3);
+}
+
+#[tokio::test]
+async fn work_dir_that_cannot_be_created_stops_the_runner() {
+    let dir = tempfile::tempdir().unwrap();
+    let relay = Arc::new(Relay::new(two_step_ring(dir.path(), ""), Mode::Exec));
+    let mut config = exec_config(Duration::ZERO);
+    config.max_laps = None;
+    config.work_root = Some(dir.path().join("does-not-exist"));
+    let (result, events) = run_collect(&relay, config).await;
+    let error = format!("{:#}", result.unwrap_err());
+    assert!(error.contains("work directory"), "{error}");
+    assert!(events.iter().all(|e| e.name() != "step_done"));
 }

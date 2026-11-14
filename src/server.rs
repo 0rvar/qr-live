@@ -1,5 +1,5 @@
-//! HTTP routes: the static client, the SSE event stream and the reference
-//! source of each step.
+//! HTTP routes: the static client, the SSE event stream, a status summary
+//! and the reference source of each step.
 
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -44,6 +44,7 @@ pub fn router(relay: Arc<Relay>, assets: Assets, shutdown: watch::Receiver<bool>
         .route("/app.js", get(app_js))
         .route("/style.css", get(style_css))
         .route("/api/events", get(events))
+        .route("/api/status", get(status))
         .route("/api/source/{index}", get(source))
         .with_state(AppState {
             relay,
@@ -73,6 +74,15 @@ async fn app_js(State(st): State<AppState>) -> Response {
 
 async fn style_css(State(st): State<AppState>) -> Response {
     asset("text/css; charset=utf-8", st.assets.style_css)
+}
+
+/// The relay's health: totals, the last lap and the most recent failures.
+async fn status(State(st): State<AppState>) -> Response {
+    (
+        [(header::CACHE_CONTROL, "no-store")],
+        axum::Json(st.relay.status()),
+    )
+        .into_response()
 }
 
 fn snapshot_event(snapshot: &serde_json::Value) -> Event {

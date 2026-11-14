@@ -1,7 +1,7 @@
 # One image that holds every toolchain of the quine relay (Ubuntu 23.10
 # package set of quine-relay commit 26066d1) and runs qr-live in exec mode.
 #
-#   docker build --platform linux/amd64 -f docker/Dockerfile -t qr-live:dev .
+#   docker build -f docker/Dockerfile -t qr-live:latest .
 #
 # Layers are ordered from slowest and most stable (apt, upstream vendor
 # tools, package caches) to cheapest (qr-live binaries, reference files), so
@@ -12,7 +12,8 @@ ARG QUINE_RELAY_COMMIT=26066d1ede0b91720baceecbd99dbdf7e4d3240b
 # ---------------------------------------------------------------------------
 # qr-live binaries. Bookworm's glibc (2.36) is older than Ubuntu 23.10's
 # (2.38), so the binaries run in the final stage.
-FROM rust:1-bookworm AS build
+# rust:1-bookworm
+FROM rust@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
@@ -29,7 +30,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 # ---------------------------------------------------------------------------
 # Every language toolchain, as in the upstream Dockerfile at 26066d1.
-FROM ubuntu:23.10 AS toolchain
+# ubuntu:23.10
+FROM ubuntu@sha256:fd7fe639db24c4e005643921beea92bc449aac4f4d40d60cd9ad9ab6456aec01 AS toolchain
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Ubuntu 23.10 is end of life; its packages live on old-releases.
@@ -74,14 +76,15 @@ RUN apt-get update && MONO_ENV_OPTIONS=--interpreter apt-get install -y \
 
 # Upstream quine-relay at the pinned commit, with its vendored interpreters
 # (lci, npiet, cfunge, compilechef, lazyk, spl2c, Vlt.exe) built into
-# vendor/local.
+# vendor/local. The unpacked source trees are only needed for that build.
 ARG QUINE_RELAY_COMMIT
 RUN git clone https://github.com/mame/quine-relay /usr/local/share/quine-relay \
  && cd /usr/local/share/quine-relay \
  && git checkout --detach "$QUINE_RELAY_COMMIT" \
  && test "$(git rev-parse HEAD)" = "$QUINE_RELAY_COMMIT" \
  && rm -rf .git \
- && make -C vendor
+ && make -C vendor \
+ && rm -rf vendor/lci-0.10.5 vendor/npiet-1.3e vendor/cfunge-0.9.0 vendor/Acme-Chef-1.03 vendor/spl-1.2.1
 
 ENV PATH=/usr/local/share/quine-relay/vendor/local/bin:/usr/games:$PATH \
     DOTNET_NOLOGO=1 \
@@ -119,11 +122,14 @@ USER root
 
 # ---------------------------------------------------------------------------
 FROM toolchain AS runtime
-COPY --from=build /out/qr-live /out/single /out/all /usr/local/bin/
 COPY reference /opt/qr-live/reference
+COPY --from=build /out/qr-live /out/single /out/all /usr/local/bin/
 USER qr
 WORKDIR /opt/qr-live
 EXPOSE 3000
-ENTRYPOINT ["/usr/bin/tini", "--", "qr-live", "--mode", "exec", "--toolchain", "upstream", \
-            "--listen", "0.0.0.0:3000", "--reference-dir", "/opt/qr-live/reference", \
-            "--min-step-ms", "4000"]
+# Arguments after the image name replace CMD, so an override repeats every
+# flag it still wants.
+ENTRYPOINT ["/usr/bin/tini", "--", "qr-live"]
+CMD ["--mode", "exec", "--toolchain", "upstream", "--listen", "0.0.0.0:3000", \
+     "--reference-dir", "/opt/qr-live/reference", "--min-step-ms", "4000", \
+     "--step-timeout-secs", "180", "--max-failed-steps", "8"]

@@ -179,7 +179,9 @@ webassembly_binary:
   output: QR.wat
   output_sha1: 16955fc5f37a955e980863b84f3336509fd67e15
   upstream:
-    command: node --experimental-wasi-unstable-preview1 /usr/local/share/quine-relay/vendor/wasi-runtime.js QR.wasm
+    # The WASI shim writes to fd 1 directly; node makes a stdout pipe
+    # non-blocking, so writes into a full pipe are lost. A file is not.
+    command: node --experimental-wasi-unstable-preview1 /usr/local/share/quine-relay/vendor/wasi-runtime.js QR.wasm > QR.wat && cat QR.wat
 
 webassembly_text:
   input: QR.wat
@@ -191,7 +193,8 @@ webassembly_text:
   upstream:
     build: wat2wasm QR.wat -o QR.wat.wasm
     build_output: QR.wat.wasm
-    command: node --experimental-wasi-unstable-preview1 /usr/local/share/quine-relay/vendor/wasi-runtime.js QR.wat.wasm
+    # Written to a file first for the same reason as webassembly_binary.
+    command: node --experimental-wasi-unstable-preview1 /usr/local/share/quine-relay/vendor/wasi-runtime.js QR.wat.wasm > QR.ws && cat QR.ws
 
 whitespace:
   input: QR.ws
@@ -703,7 +706,8 @@ jq:
 
 jsfuck:
   input: QR.jsfuck
-  unlimited_ulimit: true # ulimit -s unlimited
+  # Upstream raises the stack limit first (see the upstream block); the base
+  # command does not, because macOS refuses `ulimit -s unlimited`.
   command: node --stack-size=100000 QR.jsfuck
   output: QR.kt
   output_sha1: 8a3fb43aaae34492c32502f24dbea7120bba28c4

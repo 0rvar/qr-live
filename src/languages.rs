@@ -30,13 +30,15 @@ impl QuineLanguageSpec {
 }
 
 #[derive(serde_derive::Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct ExtraBuildFile {
     pub name: String,
     pub content: String,
 }
 
 /// The toolchain a step's commands are written for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Toolchain {
     /// The base values in `languages.yaml`, for the tools of `flake.nix`.
     Nix,
@@ -88,9 +90,22 @@ impl SpecOverride {
     }
 }
 
-/// The overrides of one language entry; the base fields are read separately.
+/// One entry of the languages file as written: the base spec plus its
+/// overrides. Unknown keys are rejected.
 #[derive(serde_derive::Deserialize)]
-struct OverrideEntry {
+#[serde(deny_unknown_fields)]
+struct LanguageEntry {
+    input: String,
+    #[serde(default)]
+    work_input: Option<String>,
+    build: Option<String>,
+    build_output: Option<String>,
+    build_file: Option<ExtraBuildFile>,
+    #[serde(default)]
+    env: HashMap<String, String>,
+    command: String,
+    output: String,
+    output_sha1: String,
     upstream: Option<SpecOverride>,
 }
 
@@ -99,18 +114,30 @@ pub fn parse_languages(
     yaml: &str,
     toolchain: Toolchain,
 ) -> anyhow::Result<HashMap<String, QuineLanguageSpec>> {
-    let mut specs: HashMap<String, QuineLanguageSpec> =
+    let entries: HashMap<String, LanguageEntry> =
         serde_yaml::from_str(yaml).context("cannot parse languages")?;
-    if toolchain == Toolchain::Upstream {
-        let overrides: HashMap<String, OverrideEntry> =
-            serde_yaml::from_str(yaml).context("cannot parse upstream overrides")?;
-        for (name, entry) in overrides {
-            if let (Some(upstream), Some(spec)) = (entry.upstream, specs.get_mut(&name)) {
-                upstream.apply(spec);
+    Ok(entries
+        .into_iter()
+        .map(|(name, entry)| {
+            let mut spec = QuineLanguageSpec {
+                input: entry.input,
+                work_input: entry.work_input,
+                build: entry.build,
+                build_output: entry.build_output,
+                build_file: entry.build_file,
+                env: entry.env,
+                command: entry.command,
+                output: entry.output,
+                output_sha1: entry.output_sha1,
+            };
+            if toolchain == Toolchain::Upstream {
+                if let Some(upstream) = &entry.upstream {
+                    upstream.apply(&mut spec);
+                }
             }
-        }
-    }
-    Ok(specs)
+            (name, spec)
+        })
+        .collect())
 }
 
 /// The embedded `languages.yaml` for `toolchain`.
