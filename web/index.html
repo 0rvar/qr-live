@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>quine relay — live</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main id="app">
+  <section id="stage" aria-label="relay ring">
+    <canvas id="ring" aria-hidden="true"></canvas>
+    <div id="center">
+      <div id="code" aria-hidden="true"><pre id="code-text"></pre><div id="code-img"></div></div>
+      <div id="now" aria-live="polite">
+        <div class="kicker"><span>step <b id="step-n">–</b> / <span id="step-total">–</span></span><span id="lap-wrap">lap <b id="lap">–</b></span></div>
+        <div id="lang">connecting</div>
+        <div id="files">&nbsp;</div>
+        <div class="meta">
+          <span id="phase" data-phase="idle">idle</span>
+          <span id="elapsed">–</span>
+          <span id="size">–</span>
+        </div>
+        <div id="note"></div>
+      </div>
+    </div>
+    <div id="conn" role="status">connecting…</div>
+  </section>
+  <aside id="panel">
+    <header>
+      <h1>quine relay <span class="dim">—</span> live</h1>
+      <span id="mode" class="badge" data-mode="">–</span>
+    </header>
+    <ul id="legend">
+      <li><i class="sw live"></i>live</li>
+      <li><i class="sw replay"></i>replayed</li>
+      <li><i class="sw fail"></i>failed</li>
+      <li><i class="sw build"></i>building</li>
+    </ul>
+    <dl id="totals">
+      <div><dt>laps seen</dt><dd id="t-laps">–</dd></div>
+      <div><dt>laps done</dt><dd id="t-done">–</dd></div>
+      <div><dt class="c-live">live</dt><dd id="t-live">–</dd></div>
+      <div><dt class="c-replay">replayed</dt><dd id="t-replay">–</dd></div>
+      <div><dt class="c-fail">failed</dt><dd id="t-fail">–</dd></div>
+      <div><dt>last lap</dt><dd id="t-last">–</dd></div>
+    </dl>
+    <h2>recent steps</h2>
+    <ol id="log"></ol>
+  </aside>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>
