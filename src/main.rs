@@ -1,3 +1,4 @@
+use std::future::IntoFuture;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -39,6 +40,10 @@ struct Args {
     /// Run each step inside this docker image instead of locally.
     #[arg(long)]
     docker_image: Option<String>,
+    /// Extra argument for `docker run`, inserted before the image name
+    /// (repeatable), e.g. `--docker-arg=--memory=4g`.
+    #[arg(long = "docker-arg", value_name = "ARG", allow_hyphen_values = true)]
+    docker_args: Vec<String>,
 }
 
 const ASSETS: Assets = Assets {
@@ -73,8 +78,13 @@ async fn main() -> anyhow::Result<()> {
         ModeArg::Exec => Mode::Exec,
     };
     let steps = relay::build_ring(&languages::get_languages(), &args.reference_dir, "ruby")?;
-    eprintln!("ring of {} steps, mode {:?}", steps.len(), mode);
-    let relay = Arc::new(Relay::new(steps, mode, args.reference_dir.clone()));
+    let relay = Arc::new(Relay::new(steps, mode));
+    eprintln!(
+        "ring of {} steps verified, mode {:?}, run {}",
+        relay.steps.len(),
+        mode,
+        relay.run_id
+    );
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let config = RunConfig {
@@ -83,20 +93,38 @@ async fn main() -> anyhow::Result<()> {
         min_step_time: Duration::from_millis(args.min_step_ms),
         step_timeout: Duration::from_secs(args.step_timeout_secs),
         docker_image: args.docker_image.clone(),
+        docker_args: args.docker_args.clone(),
         max_laps: None,
     };
-    let runner = tokio::spawn(relay::run(relay.clone(), config, shutdown_rx.clone()));
+    let mut runner = tokio::spawn(relay::run(relay.clone(), config, shutdown_rx.clone()));
 
-    let app = server::router(relay, ASSETS, shutdown_rx);
+    let app = server::router(relay, ASSETS, shutdown_rx.clone());
     let listener = tokio::net::TcpListener::bind(&args.listen).await?;
     eprintln!("listening on http://{}", listener.local_addr()?);
-    axum::serve(listener, app)
+    let serve = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             shutdown_signal().await;
             eprintln!("shutting down");
             let _ = shutdown_tx.send(true);
         })
-        .await?;
-    let _ = runner.await;
+        .into_future();
+    tokio::pin!(serve);
+
+    tokio::select! {
+        served = &mut serve => {
+            served?;
+            let _ = runner.await;
+        }
+        ended = &mut runner => {
+            if !*shutdown_rx.borrow() {
+                match ended {
+                    Ok(()) => eprintln!("runner stopped unexpectedly"),
+                    Err(e) => eprintln!("runner failed: {e}"),
+                }
+                std::process::exit(1);
+            }
+            serve.await?;
+        }
+    }
     Ok(())
 }

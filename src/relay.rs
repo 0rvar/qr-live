@@ -3,16 +3,17 @@
 //! that drives the ring forever in replay or exec mode.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::path::Path;
+use std::process::{ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context};
+use bytes::Bytes;
 use serde::Serialize;
 use sha1::{Digest, Sha1};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::{broadcast, watch};
 
 use crate::languages::QuineLanguageSpec;
@@ -23,6 +24,14 @@ pub const HISTORY_LEN: usize = 256;
 pub const CHANNEL_CAPACITY: usize = 1024;
 /// Maximum length of the `error` string in a `step_done` event.
 const MAX_ERROR_LEN: usize = 300;
+/// Maximum stdout captured from a command; more fails the step.
+pub const STDOUT_CAP: usize = 64 * 1024 * 1024;
+/// How much of the end of a command's stderr is kept.
+const STDERR_TAIL: usize = 64 * 1024;
+/// How long the output pipes may stay open after the shell has exited.
+const PIPE_GRACE: Duration = Duration::from_secs(2);
+/// Bound on each `docker kill` / `docker rm` cleanup command.
+const DOCKER_CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub fn now_ms() -> u64 {
     SystemTime::now()
@@ -33,6 +42,15 @@ pub fn now_ms() -> u64 {
 
 fn sha1_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha1::digest(bytes))
+}
+
+/// A random 64-bit value from the standard library's randomly keyed hasher.
+fn random_u64() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u64(now_ms());
+    hasher.write_u32(std::process::id());
+    hasher.finish()
 }
 
 /// One step of the relay: the language that turns `input` into `output`.
@@ -51,7 +69,7 @@ pub struct Step {
     pub exec: StepExec,
 }
 
-/// What is needed to execute a step and to describe its reference output.
+/// What is needed to execute a step, and its reference programs in memory.
 #[derive(Clone, Debug, Default)]
 pub struct StepExec {
     pub build: Option<String>,
@@ -59,14 +77,19 @@ pub struct StepExec {
     pub env: Vec<(String, String)>,
     pub command: String,
     pub expected_sha1: String,
-    pub reference_output_bytes: u64,
-    pub reference_output_sha1: String,
+    /// The reference input program.
+    pub input_bytes: Bytes,
+    pub input_sha1: String,
+    /// The reference output program (the next step's input); its SHA-1 is
+    /// `expected_sha1`.
+    pub reference_output: Bytes,
 }
 
 /// Orders the languages into a ring starting at `start`, following each
-/// language's `output` to the language whose `input` it is, and loads the
-/// reference sizes and hashes from `reference_dir`. Fails unless the walk
-/// visits every language exactly once and returns to `start`.
+/// language's `output` to the language whose `input` it is, and loads every
+/// reference program from `reference_dir` into memory. Fails unless the walk
+/// visits every language exactly once and returns to `start`, every reference
+/// file is readable, and each reference output hashes to its `output_sha1`.
 pub fn build_ring(
     languages: &HashMap<String, QuineLanguageSpec>,
     reference_dir: &Path,
@@ -107,17 +130,32 @@ pub fn build_ring(
         );
     }
 
+    let inputs = order
+        .iter()
+        .map(|name| {
+            let path = reference_dir.join(&languages[*name].input);
+            std::fs::read(&path)
+                .map(Bytes::from)
+                .with_context(|| format!("cannot read reference file {}", path.display()))
+        })
+        .collect::<anyhow::Result<Vec<Bytes>>>()?;
+
+    let count = order.len();
     order
         .into_iter()
         .enumerate()
         .map(|(index, name)| {
             let spec = &languages[name];
-            let input_path = reference_dir.join(&spec.input);
-            let input = std::fs::read(&input_path)
-                .with_context(|| format!("reading {}", input_path.display()))?;
-            let output_path = reference_dir.join(&spec.output);
-            let output = std::fs::read(&output_path)
-                .with_context(|| format!("reading {}", output_path.display()))?;
+            let input = inputs[index].clone();
+            let output = inputs[(index + 1) % count].clone();
+            let output_sha1 = sha1_hex(&output);
+            if output_sha1 != spec.output_sha1 {
+                bail!(
+                    "reference file {} has SHA-1 {output_sha1}, but {name}'s output_sha1 is {}",
+                    reference_dir.join(&spec.output).display(),
+                    spec.output_sha1
+                );
+            }
             let binary = std::str::from_utf8(&input).is_err() || input.contains(&0);
             let mut env: Vec<(String, String)> = spec
                 .env
@@ -142,8 +180,9 @@ pub fn build_ring(
                     env,
                     command: spec.command.clone(),
                     expected_sha1: spec.output_sha1.clone(),
-                    reference_output_bytes: output.len() as u64,
-                    reference_output_sha1: sha1_hex(&output),
+                    input_sha1: sha1_hex(&input),
+                    input_bytes: input,
+                    reference_output: output,
                 },
             })
         })
@@ -192,6 +231,8 @@ pub struct StepDone {
     pub output_sha1: String,
     pub expected_sha1: String,
     pub error: Option<String>,
+    /// Why exec mode replayed the step instead of running it.
+    pub skipped: Option<String>,
     pub at_ms: u64,
 }
 
@@ -242,21 +283,35 @@ pub struct Current {
     pub started_at_ms: u64,
 }
 
+/// Counters since the process started. A step counts as failed when
+/// `ok == false`, live when `live && ok`, replayed when `!live`.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Totals {
+    pub steps_live: u64,
+    pub steps_replayed: u64,
+    pub steps_failed: u64,
+    pub laps_done: u64,
+    pub last_lap: Option<LapDone>,
+}
+
 #[derive(Debug)]
 struct RelayState {
     lap: u64,
     current: Option<Current>,
     history: VecDeque<StepDone>,
+    totals: Totals,
 }
 
 #[derive(Debug, Serialize)]
 pub struct Snapshot<'a> {
+    pub run_id: &'a str,
     pub mode: Mode,
     pub server_time_ms: u64,
     pub lap: u64,
     pub steps: &'a [Step],
     pub current: Option<Current>,
     pub history: Vec<StepDone>,
+    pub totals: Totals,
 }
 
 /// Owns the ring, the shared state and the broadcast channel. Every state
@@ -266,23 +321,25 @@ pub struct Snapshot<'a> {
 pub struct Relay {
     pub steps: Vec<Step>,
     pub mode: Mode,
-    pub reference_dir: PathBuf,
+    /// Unique per relay instance, so clients can tell a restarted server.
+    pub run_id: String,
     tx: broadcast::Sender<RelayEvent>,
     state: Mutex<RelayState>,
 }
 
 impl Relay {
-    pub fn new(steps: Vec<Step>, mode: Mode, reference_dir: PathBuf) -> Self {
+    pub fn new(steps: Vec<Step>, mode: Mode) -> Self {
         let (tx, _) = broadcast::channel(CHANNEL_CAPACITY);
         Relay {
             steps,
             mode,
-            reference_dir,
+            run_id: format!("{:x}-{:016x}", now_ms(), random_u64()),
             tx,
             state: Mutex::new(RelayState {
                 lap: 1,
                 current: None,
                 history: VecDeque::with_capacity(HISTORY_LEN),
+                totals: Totals::default(),
             }),
         }
     }
@@ -303,12 +360,14 @@ impl Relay {
 
     fn snapshot_locked(&self, state: &RelayState) -> serde_json::Value {
         serde_json::to_value(Snapshot {
+            run_id: &self.run_id,
             mode: self.mode,
             server_time_ms: now_ms(),
             lap: state.lap,
             steps: &self.steps,
             current: state.current.clone(),
             history: state.history.iter().cloned().collect(),
+            totals: state.totals.clone(),
         })
         .expect("snapshot serializes")
     }
@@ -340,9 +399,21 @@ impl Relay {
                     state.history.pop_front();
                 }
                 state.history.push_back(e.clone());
+                let totals = &mut state.totals;
+                if !e.ok {
+                    totals.steps_failed += 1;
+                }
+                if e.live && e.ok {
+                    totals.steps_live += 1;
+                }
+                if !e.live {
+                    totals.steps_replayed += 1;
+                }
             }
             RelayEvent::LapDone(e) => {
                 state.lap = e.lap + 1;
+                state.totals.laps_done += 1;
+                state.totals.last_lap = Some(e.clone());
             }
         }
         // An error only means nobody is subscribed.
@@ -358,28 +429,40 @@ pub struct RunConfig {
     pub step_time: Duration,
     /// Minimum time each step stays on screen in exec mode.
     pub min_step_time: Duration,
-    /// Timeout for each of the build and run phases in exec mode.
+    /// Deadline for each of the build and run phases in exec mode.
     pub step_timeout: Duration,
     /// Run build and command inside this docker image instead of locally.
     pub docker_image: Option<String>,
+    /// Extra `docker run` arguments, inserted before the image name.
+    pub docker_args: Vec<String>,
     /// Stop after this many laps; `None` runs forever.
     pub max_laps: Option<u64>,
 }
 
 /// Runs the relay until shutdown is signalled (or `max_laps` is reached).
-/// Stopping drops any running step, which kills its processes.
+/// Stopping drops any running step, which kills its process group; any
+/// container still registered is then removed before this returns.
 pub async fn run(relay: Arc<Relay>, config: RunConfig, mut shutdown: watch::Receiver<bool>) {
     tokio::select! {
         _ = run_laps(&relay, &config) => {}
         _ = shutdown.wait_for(|stop| *stop) => {}
     }
+    let leftover: Vec<String> = LIVE_CONTAINERS.lock().unwrap().drain().collect();
+    for name in leftover {
+        force_remove_container(&name).await;
+    }
+}
+
+enum Outcome {
+    Replayed { skipped: Option<String> },
+    Executed(ExecResult),
 }
 
 async fn run_laps(relay: &Relay, config: &RunConfig) {
     let steps = &relay.steps;
     let mut lap = relay.state.lock().unwrap().lap;
     let mut laps_run = 0;
-    let mut program: Option<Vec<u8>> = None;
+    let mut program: Option<Bytes> = None;
     loop {
         let lap_started = Instant::now();
         let mut live_steps = 0;
@@ -396,19 +479,25 @@ async fn run_laps(relay: &Relay, config: &RunConfig) {
             let outcome = match config.mode {
                 Mode::Replay => {
                     replay_step(relay, lap, step, config.step_time).await;
-                    None
+                    Outcome::Replayed { skipped: None }
                 }
                 Mode::Exec => {
-                    let input = match program.take() {
-                        Some(bytes) => bytes,
-                        None => read_reference(relay, &step.input).await,
-                    };
-                    let outcome = if config.docker_image.is_none() && missing_tool(step).is_some()
-                    {
-                        replay_step(relay, lap, step, config.min_step_time).await;
-                        None
+                    let input = program
+                        .take()
+                        .unwrap_or_else(|| step.exec.input_bytes.clone());
+                    let missing = if config.docker_image.is_none() {
+                        missing_tool(step)
                     } else {
-                        Some(exec_step(relay, lap, step, &input, config).await)
+                        None
+                    };
+                    let outcome = match missing {
+                        Some(tool) => {
+                            replay_step(relay, lap, step, config.min_step_time).await;
+                            Outcome::Replayed {
+                                skipped: Some(format!("tool not found: {tool}")),
+                            }
+                        }
+                        None => Outcome::Executed(exec_step(relay, lap, step, &input, config).await),
                     };
                     let elapsed = started.elapsed();
                     if elapsed < config.min_step_time {
@@ -419,9 +508,9 @@ async fn run_laps(relay: &Relay, config: &RunConfig) {
             };
 
             let done = match outcome {
-                None => {
+                Outcome::Replayed { skipped } => {
                     if config.mode == Mode::Exec {
-                        program = Some(read_reference(relay, &step.output).await);
+                        program = Some(step.exec.reference_output.clone());
                     }
                     StepDone {
                         lap,
@@ -430,14 +519,15 @@ async fn run_laps(relay: &Relay, config: &RunConfig) {
                         ok: true,
                         live: false,
                         duration_ms: started.elapsed().as_millis() as u64,
-                        output_bytes: step.exec.reference_output_bytes,
-                        output_sha1: step.exec.reference_output_sha1.clone(),
+                        output_bytes: step.exec.reference_output.len() as u64,
+                        output_sha1: step.exec.expected_sha1.clone(),
                         expected_sha1: step.exec.expected_sha1.clone(),
                         error: None,
+                        skipped,
                         at_ms: now_ms(),
                     }
                 }
-                Some(result) => {
+                Outcome::Executed(result) => {
                     live_steps += 1;
                     let output_bytes = result.stdout.len() as u64;
                     let output_sha1 = sha1_hex(&result.stdout);
@@ -450,7 +540,7 @@ async fn run_laps(relay: &Relay, config: &RunConfig) {
                     };
                     if error.is_some() {
                         failed_steps += 1;
-                        program = Some(read_reference(relay, &step.output).await);
+                        program = Some(step.exec.reference_output.clone());
                     } else {
                         program = Some(result.stdout);
                     }
@@ -465,10 +555,17 @@ async fn run_laps(relay: &Relay, config: &RunConfig) {
                         output_sha1,
                         expected_sha1: step.exec.expected_sha1.clone(),
                         error: error.map(|e| one_line(&e)),
+                        skipped: None,
                         at_ms: now_ms(),
                     }
                 }
             };
+            let detail = done
+                .error
+                .as_deref()
+                .or(done.skipped.as_deref())
+                .map(|e| format!(": {e}"))
+                .unwrap_or_default();
             eprintln!(
                 "lap {} step {:>3} {:<14} {} {}ms{}",
                 done.lap,
@@ -480,10 +577,7 @@ async fn run_laps(relay: &Relay, config: &RunConfig) {
                     (true, false) => "FAIL",
                 },
                 done.duration_ms,
-                done.error
-                    .as_deref()
-                    .map(|e| format!(": {e}"))
-                    .unwrap_or_default()
+                detail
             );
             relay.emit(RelayEvent::StepDone(done));
         }
@@ -503,17 +597,6 @@ async fn run_laps(relay: &Relay, config: &RunConfig) {
         laps_run += 1;
         if config.max_laps.is_some_and(|max| laps_run >= max) {
             return;
-        }
-    }
-}
-
-async fn read_reference(relay: &Relay, name: &str) -> Vec<u8> {
-    let path = relay.reference_dir.join(name);
-    match tokio::fs::read(&path).await {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            eprintln!("cannot read {}: {e}", path.display());
-            Vec::new()
         }
     }
 }
@@ -575,13 +658,13 @@ fn is_executable(path: &Path) -> bool {
 }
 
 struct ExecResult {
-    stdout: Vec<u8>,
+    stdout: Bytes,
     error: Option<String>,
 }
 
 /// Executes one step in a fresh temporary directory: writes the input and the
 /// build file, runs the build (if any) and then the command, and captures the
-/// command's stdout.
+/// command's stdout. The directory is removed afterwards.
 async fn exec_step(
     relay: &Relay,
     lap: u64,
@@ -589,96 +672,179 @@ async fn exec_step(
     input: &[u8],
     config: &RunConfig,
 ) -> ExecResult {
-    let fail = |error: String| ExecResult {
-        stdout: Vec::new(),
-        error: Some(error),
-    };
     let dir = match tempfile::Builder::new().prefix("qr-live-").tempdir() {
         Ok(dir) => dir,
-        Err(e) => return fail(format!("cannot create temp dir: {e}")),
+        Err(e) => {
+            return ExecResult {
+                stdout: Bytes::new(),
+                error: Some(format!("cannot create temp dir: {e}")),
+            }
+        }
     };
-    if let Err(e) = tokio::fs::write(dir.path().join(&step.input), input).await {
+    let result = exec_in_dir(relay, lap, step, input, config, dir.path()).await;
+    let path = dir.path().to_path_buf();
+    if let Err(e) = dir.close() {
+        eprintln!("warning: cannot remove temp dir {}: {e}", path.display());
+    }
+    result
+}
+
+async fn exec_in_dir(
+    relay: &Relay,
+    lap: u64,
+    step: &Step,
+    input: &[u8],
+    config: &RunConfig,
+    dir: &Path,
+) -> ExecResult {
+    let fail = |error: String| ExecResult {
+        stdout: Bytes::new(),
+        error: Some(error),
+    };
+    if let Err(e) = tokio::fs::write(dir.join(&step.input), input).await {
         return fail(format!("cannot write {}: {e}", step.input));
     }
     if let Some((name, content)) = &step.exec.build_file {
-        if let Err(e) = tokio::fs::write(dir.path().join(name), content).await {
+        if let Err(e) = tokio::fs::write(dir.join(name), content).await {
             return fail(format!("cannot write {name}: {e}"));
         }
     }
 
     if let Some(build) = &step.exec.build {
         emit_phase(relay, lap, step, Phase::Build);
-        let output = run_shell(build, dir.path(), &step.exec.env, config).await;
+        let output = run_shell(build, dir, &step.exec.env, config).await;
         if let Some(error) = output.error {
             return fail(format!("build: {error}"));
         }
     }
 
     emit_phase(relay, lap, step, Phase::Run);
-    let output = run_shell(&step.exec.command, dir.path(), &step.exec.env, config).await;
-    ExecResult {
-        stdout: output.stdout,
-        error: output.error,
-    }
-}
-
-struct ShellOutput {
-    stdout: Vec<u8>,
-    error: Option<String>,
+    run_shell(&step.exec.command, dir, &step.exec.env, config).await
 }
 
 static CONTAINER_SEQ: AtomicU64 = AtomicU64::new(0);
 
-/// Kills a docker container when dropped, unless disarmed.
-struct ContainerGuard {
-    name: Option<String>,
-}
+/// Containers that have been started and not yet confirmed gone.
+static LIVE_CONTAINERS: std::sync::LazyLock<Mutex<HashSet<String>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
 
-impl Drop for ContainerGuard {
-    fn drop(&mut self) {
-        if let Some(name) = self.name.take() {
-            let _ = std::process::Command::new("docker")
-                .args(["kill", &name])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn();
+/// Runs a docker cleanup command quietly, bounded by `DOCKER_CLEANUP_TIMEOUT`,
+/// and reaps it.
+async fn docker_quiet(args: &[&str]) {
+    let mut command = tokio::process::Command::new("docker");
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    match command.spawn() {
+        Ok(mut child) => {
+            if tokio::time::timeout(DOCKER_CLEANUP_TIMEOUT, child.wait())
+                .await
+                .is_err()
+            {
+                eprintln!("warning: docker {} timed out", args.join(" "));
+                let _ = child.kill().await;
+            }
         }
+        Err(e) => eprintln!("warning: cannot run docker {}: {e}", args.join(" ")),
     }
 }
 
-/// Kills a process group when dropped, unless disarmed.
+/// Kills and removes a container, then forgets it.
+async fn force_remove_container(name: &str) {
+    docker_quiet(&["kill", name]).await;
+    docker_quiet(&["rm", "-f", name]).await;
+    LIVE_CONTAINERS.lock().unwrap().remove(name);
+}
+
+/// SIGKILLs a process group when dropped.
 struct ProcessGroupGuard {
     pgid: Option<u32>,
 }
 
-impl Drop for ProcessGroupGuard {
-    fn drop(&mut self) {
+impl ProcessGroupGuard {
+    fn kill(&mut self) {
         if let Some(pgid) = self.pgid.take() {
-            let _ = std::process::Command::new("kill")
-                .args(["-KILL", "--", &format!("-{pgid}")])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+            // SAFETY: killpg has no memory-safety preconditions.
+            unsafe {
+                libc::killpg(pgid as libc::pid_t, libc::SIGKILL);
+            }
         }
     }
 }
 
-/// Runs `sh -c script` in `dir` (directly or in docker), with a timeout.
-/// On timeout or when the future is dropped, the whole process group (and the
-/// container, under docker) is killed.
+impl Drop for ProcessGroupGuard {
+    fn drop(&mut self) {
+        self.kill();
+    }
+}
+
+/// Reads to EOF, failing once more than `cap` bytes have arrived.
+async fn read_capped<R: AsyncRead + Unpin>(mut reader: R, cap: usize) -> Result<Vec<u8>, ()> {
+    let mut buf = Vec::new();
+    let mut chunk = vec![0u8; 64 * 1024];
+    loop {
+        let n = reader.read(&mut chunk).await.unwrap_or(0);
+        if n == 0 {
+            return Ok(buf);
+        }
+        if buf.len() + n > cap {
+            return Err(());
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
+}
+
+/// Reads to EOF, keeping only roughly the last `STDERR_TAIL` bytes in `tail`.
+async fn drain_tail<R: AsyncRead + Unpin>(mut reader: R, tail: Arc<Mutex<Vec<u8>>>) {
+    let mut chunk = vec![0u8; 16 * 1024];
+    loop {
+        let n = reader.read(&mut chunk).await.unwrap_or(0);
+        if n == 0 {
+            return;
+        }
+        let mut tail = tail.lock().unwrap();
+        tail.extend_from_slice(&chunk[..n]);
+        if tail.len() > 2 * STDERR_TAIL {
+            let excess = tail.len() - STDERR_TAIL;
+            tail.drain(..excess);
+        }
+    }
+}
+
+enum Ending {
+    Exited(ExitStatus),
+    WaitFailed(std::io::Error),
+    TimedOut,
+    Overflow,
+}
+
+/// Runs `sh -c script` in `dir` (directly or in docker). One deadline of
+/// `step_timeout` covers the process and both output pipes. Stdout is capped
+/// at `STDOUT_CAP`. After the shell exits, the pipes get `PIPE_GRACE` to
+/// close. On every failure the process group is killed and, under docker,
+/// the container is removed; dropping the future kills the group too.
 async fn run_shell(
     script: &str,
     dir: &Path,
     env: &[(String, String)],
     config: &RunConfig,
-) -> ShellOutput {
-    let mut container = ContainerGuard { name: None };
+) -> ExecResult {
+    let fail = |error: String| ExecResult {
+        stdout: Bytes::new(),
+        error: Some(error),
+    };
+    let deadline = tokio::time::Instant::now() + config.step_timeout;
+    let mut container: Option<String> = None;
     let mut command = match &config.docker_image {
         Some(image) => {
             let name = format!(
-                "qr-live-{}-{}",
+                "qr-live-{}-{}-{:08x}",
                 std::process::id(),
-                CONTAINER_SEQ.fetch_add(1, Ordering::Relaxed)
+                CONTAINER_SEQ.fetch_add(1, Ordering::Relaxed),
+                random_u64() as u32
             );
             let mut c = tokio::process::Command::new("docker");
             c.args(["run", "--rm", "--network", "none", "--name", &name, "-v"])
@@ -687,8 +853,10 @@ async fn run_shell(
             for (k, v) in env {
                 c.arg("-e").arg(format!("{k}={v}"));
             }
-            c.arg(image).args(["sh", "-c", script]);
-            container.name = Some(name);
+            c.args(&config.docker_args)
+                .arg(image)
+                .args(["sh", "-c", script]);
+            container = Some(name);
             c
         }
         None => {
@@ -706,71 +874,110 @@ async fn run_shell(
         .process_group(0)
         .kill_on_drop(true);
 
+    if let Some(name) = &container {
+        LIVE_CONTAINERS.lock().unwrap().insert(name.clone());
+    }
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(e) => {
-            return ShellOutput {
-                stdout: Vec::new(),
-                error: Some(format!("cannot spawn: {e}")),
+            if let Some(name) = &container {
+                LIVE_CONTAINERS.lock().unwrap().remove(name);
             }
+            return fail(format!("cannot spawn: {e}"));
         }
     };
-    let group = ProcessGroupGuard { pgid: child.id() };
-    let mut stdout_pipe = child.stdout.take().expect("stdout is piped");
-    let mut stderr_pipe = child.stderr.take().expect("stderr is piped");
-    let stdout_task = tokio::spawn(async move {
-        let mut buf = Vec::new();
-        let _ = stdout_pipe.read_to_end(&mut buf).await;
-        buf
-    });
-    let stderr_task = tokio::spawn(async move {
-        let mut buf = Vec::new();
-        let _ = stderr_pipe.read_to_end(&mut buf).await;
-        buf
-    });
+    let mut group = ProcessGroupGuard { pgid: child.id() };
+    let stdout_pipe = child.stdout.take().expect("stdout is piped");
+    let stderr_pipe = child.stderr.take().expect("stderr is piped");
+    let mut stdout_task = tokio::spawn(read_capped(stdout_pipe, STDOUT_CAP));
+    let stderr = Arc::new(Mutex::new(Vec::new()));
+    let mut stderr_task = tokio::spawn(drain_tail(stderr_pipe, stderr.clone()));
 
-    let status = tokio::time::timeout(config.step_timeout, child.wait()).await;
-    match status {
-        Err(_) => {
-            drop(group);
-            drop(container);
-            let _ = child.kill().await;
-            stdout_task.abort();
-            stderr_task.abort();
-            ShellOutput {
-                stdout: Vec::new(),
-                error: Some(format!(
-                    "timed out after {}s",
-                    config.step_timeout.as_secs_f64()
-                )),
+    let mut stdout: Option<Vec<u8>> = None;
+    let ending = loop {
+        tokio::select! {
+            status = child.wait() => break match status {
+                Ok(status) => Ending::Exited(status),
+                Err(e) => Ending::WaitFailed(e),
+            },
+            read = &mut stdout_task, if stdout.is_none() => match read {
+                Ok(Ok(bytes)) => stdout = Some(bytes),
+                _ => break Ending::Overflow,
+            },
+            _ = tokio::time::sleep_until(deadline) => break Ending::TimedOut,
+        }
+    };
+
+    // The leader has exited or is about to be killed; take anything still in
+    // its group with it so the pipes close.
+    group.kill();
+
+    // `docker run` exits with the container's own status unless it was killed
+    // or failed itself (125); only a clean exit means the container is gone.
+    let mut docker_clean = false;
+    let result = match ending {
+        Ending::Exited(status) => {
+            let now = tokio::time::Instant::now();
+            let grace_end = deadline.min(now + PIPE_GRACE);
+            let grace_error = if deadline <= now + PIPE_GRACE {
+                format!("timed out after {}s", config.step_timeout.as_secs_f64())
+            } else {
+                "output pipe still open after exit".to_string()
+            };
+            let pipes_closed = tokio::time::timeout_at(grace_end, async {
+                let stdout = match stdout.take() {
+                    Some(bytes) => Ok(bytes),
+                    None => (&mut stdout_task).await.unwrap_or(Err(())),
+                };
+                let _ = (&mut stderr_task).await;
+                stdout
+            })
+            .await;
+            match pipes_closed {
+                Err(_) => fail(grace_error),
+                Ok(Err(())) => fail(format!("output exceeded {} MiB", STDOUT_CAP >> 20)),
+                Ok(Ok(bytes)) => {
+                    docker_clean = matches!(status.code(), Some(code) if code != 125);
+                    let error = (!status.success()).then(|| {
+                        let stderr = stderr.lock().unwrap();
+                        let stderr = String::from_utf8_lossy(&stderr);
+                        let last = stderr
+                            .lines()
+                            .map(str::trim)
+                            .rfind(|l| !l.is_empty())
+                            .unwrap_or("")
+                            .to_string();
+                        match status.code() {
+                            Some(code) => format!("exit status {code}: {last}"),
+                            None => format!("killed by signal: {last}"),
+                        }
+                    });
+                    ExecResult {
+                        stdout: Bytes::from(bytes),
+                        error,
+                    }
+                }
             }
         }
-        Ok(Err(e)) => ShellOutput {
-            stdout: Vec::new(),
-            error: Some(format!("wait failed: {e}")),
-        },
-        Ok(Ok(status)) => {
-            // The leader has exited; kill anything it left running in its
-            // group so the pipes close.
-            drop(group);
-            container.name = None;
-            let stdout = stdout_task.await.unwrap_or_default();
-            let stderr = stderr_task.await.unwrap_or_default();
-            let error = (!status.success()).then(|| {
-                let stderr = String::from_utf8_lossy(&stderr);
-                let last = stderr
-                    .lines()
-                    .map(str::trim)
-                    .rfind(|l| !l.is_empty())
-                    .unwrap_or("");
-                match status.code() {
-                    Some(code) => format!("exit status {code}: {last}"),
-                    None => format!("killed by signal: {last}"),
-                }
-            });
-            ShellOutput { stdout, error }
+        Ending::WaitFailed(e) => fail(format!("wait failed: {e}")),
+        Ending::TimedOut => fail(format!(
+            "timed out after {}s",
+            config.step_timeout.as_secs_f64()
+        )),
+        Ending::Overflow => fail(format!("output exceeded {} MiB", STDOUT_CAP >> 20)),
+    };
+    stdout_task.abort();
+    stderr_task.abort();
+    let _ = child.kill().await;
+
+    if let Some(name) = container {
+        if docker_clean {
+            LIVE_CONTAINERS.lock().unwrap().remove(&name);
+        } else {
+            force_remove_container(&name).await;
         }
     }
+    result
 }
 
 /// Collapses whitespace runs to single spaces and truncates to

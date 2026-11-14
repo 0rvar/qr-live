@@ -711,8 +711,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "bytes",
  "clap 4.6.7",
  "futures-util",
+ "libc",
  "prettydiff",
  "serde",
  "serde_derive",
@@ -722,6 +724,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-stream",
+ "tower",
 ]
 
 [[package]]

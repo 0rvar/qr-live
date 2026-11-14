@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use axum::{
     extract::{Path, Query, State},
-    http::{header, HeaderValue, StatusCode},
+    http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode},
     response::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse, Response,
@@ -15,7 +15,7 @@ use axum::{
     routing::get,
     Router,
 };
-use futures_util::stream::{self, Stream, StreamExt};
+use futures_util::stream::{self, StreamExt};
 use serde::Deserialize;
 use tokio::sync::{broadcast, watch};
 
@@ -78,6 +78,7 @@ async fn style_css(State(st): State<AppState>) -> Response {
 fn snapshot_event(snapshot: &serde_json::Value) -> Event {
     Event::default()
         .event("snapshot")
+        .retry(Duration::from_millis(1000))
         .json_data(snapshot)
         .expect("snapshot serializes")
 }
@@ -92,7 +93,7 @@ fn relay_event(event: &RelayEvent) -> Event {
 /// Streams a `snapshot` followed by every relay event. A receiver that falls
 /// behind is replaced by a fresh subscription and a new snapshot, so the
 /// client never applies events older than its latest snapshot.
-async fn events(State(st): State<AppState>) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+async fn events(State(st): State<AppState>) -> impl IntoResponse {
     let (rx, snapshot) = st.relay.subscribe();
     let relay = st.relay.clone();
     let updates = stream::unfold(
@@ -117,7 +118,10 @@ async fn events(State(st): State<AppState>) -> Sse<impl Stream<Item = Result<Eve
             let _ = shutdown.wait_for(|stop| *stop).await;
         })
         .map(Ok::<_, Infallible>);
-    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+    (
+        [("x-accel-buffering", "no")],
+        Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))),
+    )
 }
 
 #[derive(Deserialize)]
@@ -125,28 +129,48 @@ struct SourceQuery {
     limit: Option<usize>,
 }
 
-/// The reference input of a step, optionally truncated to `limit` bytes.
+/// Whether an `If-None-Match` header value matches `etag`.
+fn etag_matches(if_none_match: &str, etag: &str) -> bool {
+    if_none_match.split(',').map(str::trim).any(|candidate| {
+        candidate == "*" || candidate.strip_prefix("W/").unwrap_or(candidate) == etag
+    })
+}
+
+/// The reference input of a step, optionally truncated to `limit` bytes,
+/// served from memory with an ETag of the input's SHA-1 and the limit.
 async fn source(
     State(st): State<AppState>,
     Path(index): Path<usize>,
     Query(query): Query<SourceQuery>,
+    headers: HeaderMap,
 ) -> Response {
     let Some(step) = st.relay.steps.get(index) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let path = st.relay.reference_dir.join(&step.input);
-    let mut bytes = match tokio::fs::read(&path).await {
-        Ok(bytes) => bytes,
-        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+    let full = &step.exec.input_bytes;
+    let etag = match query.limit {
+        Some(limit) => format!("\"{}-{limit}\"", step.exec.input_sha1),
+        None => format!("\"{}-full\"", step.exec.input_sha1),
     };
-    let total = bytes.len();
+    let etag_value = HeaderValue::from_str(&etag).expect("hex and digits are a valid header");
+    let cache = (header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=3600"));
+
+    let not_modified = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| etag_matches(v, &etag));
+    if not_modified {
+        return (StatusCode::NOT_MODIFIED, [(header::ETAG, etag_value), cache]).into_response();
+    }
+
+    let mut end = full.len();
     if let Some(limit) = query.limit {
-        if limit < bytes.len() {
-            bytes.truncate(limit);
+        if limit < end {
+            end = limit;
             if !step.binary {
-                if let Err(e) = std::str::from_utf8(&bytes) {
+                if let Err(e) = std::str::from_utf8(&full[..end]) {
                     if e.error_len().is_none() {
-                        bytes.truncate(e.valid_up_to());
+                        end = e.valid_up_to();
                     }
                 }
             }
@@ -159,17 +183,17 @@ async fn source(
     } else {
         "application/octet-stream"
     };
-    let mut response = (
+    (
         [
-            (header::CONTENT_TYPE, content_type),
-            (header::CACHE_CONTROL, "no-cache"),
+            (header::CONTENT_TYPE, HeaderValue::from_static(content_type)),
+            cache,
+            (header::ETAG, etag_value),
+            (
+                HeaderName::from_static("x-total-size"),
+                HeaderValue::from(full.len()),
+            ),
         ],
-        bytes,
+        full.slice(..end),
     )
-        .into_response();
-    response.headers_mut().insert(
-        "x-total-size",
-        HeaderValue::from_str(&total.to_string()).expect("digits are a valid header"),
-    );
-    response
+        .into_response()
 }
