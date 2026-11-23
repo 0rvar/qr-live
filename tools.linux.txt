@@ -1,0 +1,8 @@
+ats2
+bsdgames
+gdb
+gforth
+gnat
+gap
+gnu-cobol
+intercal

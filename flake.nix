@@ -52,14 +52,25 @@
             haskellTools = toolsFromFile ./tools.haskellPackages.txt pkgs pkgs.haskellPackages;
             esotericPackages = esoteric_nix.packages.${system};
             esotericPaths = builtins.attrValues esotericPackages;
+            linuxOnlyTools = toolsFromFile ./tools.linux.txt pkgs pkgs;
           in
-          tools.packages // haskellTools.packages // esotericPackages //
+          tools.packages //
+          haskellTools.packages //
+          esotericPackages //
+          lib.attrsets.optionalAttrs (system == "x86_64-linux") linuxOnlyTools.packages //
           {
             default = pkgs.buildEnv
               {
                 name = "all-tools-shell";
-                paths = tools.paths ++ haskellTools.paths ++ esotericPaths;
+                paths =
+                  tools.paths ++
+                  haskellTools.paths ++
+                  esotericPaths ++
+                  (lib.optionals (system == "x86_64-linux") linuxOnlyTools.paths) ++
+                  [ pkgs.libiconv ];
                 ignoreCollisions = true;
+                # Fix ld: library not found for -liconv
+                nativeBuildInputs = [ pkgs.libiconv ];
               };
           }
         );
