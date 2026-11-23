@@ -11,6 +11,7 @@ A live visualisation of mame's 128-language quine relay. A Rust server runs the 
 - `src/server.rs` - axum router: static files, `/api/events` (SSE), `/api/status`, `/api/source/{index}`.
 - `web/` - the client (plain HTML, JS and CSS, no build step). Embedded in the binary with `include_str!`, so a change needs a rebuild.
 - `src/bin/single.rs`, `src/bin/all.rs` - run and verify one step or every step against `reference/`.
+- `flake.nix` - a nix shell with the language tools, read from `tools.txt`, `tools.haskellPackages.txt` and, on x86_64-linux only, `tools.linux.txt`. `missing_pkgs.txt` lists the tools the nix shell still lacks. The nix toolchain is incomplete and is not what the deployment uses.
 
 ## Run
 
@@ -109,6 +110,27 @@ virtualisation.oci-containers.containers.qr-live = {
 Under emulation on Apple silicon (Rosetta) two runtimes need workarounds that real amd64 does not: `-e MONO_ENV_OPTIONS=--interpreter` (mono's JIT aborts on Rosetta's high addresses) and `-e DOTNET_EnableWriteXorExecute=0` (Rosetta cannot translate .NET's W^X mappings). Erlang/elixir segfault and maxima is OOM-killed there, even with `--privileged`.
 
 Not yet verified on real amd64: elixir, erlang, maxima (with only the seccomp profile), mono's JIT steps and the three dotnet steps without the emulation variables, and the 4 GiB memory figure.
+
+## Status and next steps
+
+Working:
+
+- The server and the page, in replay and exec mode. Verified on macOS against the real server.
+- The image builds and runs under amd64 emulation on Apple silicon: 125 of 128 steps pass, a paced lap takes about 12 minutes, the image is 13.4 GB.
+
+Next, in order:
+
+1. Build the image on the amd64 host and run `docker run --rm --entrypoint all ...run flags... qr-live:latest --toolchain upstream`. The target is 128 of 128. This settles the list under "Not yet verified on real amd64" above; remove that line and the emulation figures once it passes.
+2. Deploy with the run flags or the NixOS snippet above (the snippet has not been run on NixOS), choose between the published port and the no-egress network, and point an uptime check at `/api/status`.
+3. Watch `memory.peak` over a few laps and set `--memory` from it.
+
+Known gaps:
+
+- Outside the image, an exec step skipped for a missing tool is held for `--min-step-ms` before its `step_done`, so the page shows it as running for that long.
+- The tool-on-PATH check reads only the first word of a command; it does not follow `||`, `exec` or subshells.
+- `--docker-image` (one container per step) has never been run.
+- The page redraws every frame while idle and has no watchdog for a connection that stays open but goes silent.
+- The nix toolchain lacks the tools in `missing_pkgs.txt`, and there is no NixOS package or module for the server in `flake.nix`.
 
 ## Test
 
